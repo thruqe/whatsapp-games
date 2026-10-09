@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>WhatsApp Webview Games</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Header Bar -->
+  <header class="app-header">
+    <div class="brand">
+      <span class="brand-icon">🎮</span>
+      <span class="brand-title">WhatsRook Games</span>
+    </div>
+    <div class="user-chip" id="userChip" style="display: none;">
+      <span class="avatar-icon">👤</span>
+      <span id="headerUsername">...</span>
+      <span class="badge" id="headerRating">1000 ELO</span>
+    </div>
+    <button class="icon-btn" id="btnOpenLeaderboard" title="Leaderboard">🏆</button>
+  </header>
+
+  <!-- Main Container -->
+  <main class="main-content">
+
+    <!-- View 1: Connecting / Loading -->
+    <div class="view" id="viewLoading">
+      <div class="card center-card">
+        <div class="spinner"></div>
+        <h2>Connecting to Game Server...</h2>
+        <p class="subtitle" id="connectionStatus">Authenticating bot session...</p>
+      </div>
+    </div>
+
+    <!-- View 2: Username Registration Modal -->
+    <div class="view" id="viewUsername" style="display: none;">
+      <div class="card modal-card">
+        <div class="modal-icon">🏷️</div>
+        <h2>Choose Your Gamer Tag</h2>
+        <p class="subtitle">Please enter a unique username to represent you on the global leaderboard.</p>
+        
+        <form id="usernameForm">
+          <div class="input-group">
+            <span class="input-prefix">@</span>
+            <input type="text" id="usernameInput" placeholder="Enter unique username..." maxlength="20" required autocomplete="off">
+          </div>
+          <div class="error-msg" id="usernameError"></div>
+          <button type="submit" class="btn btn-primary" id="btnSubmitUsername">Confirm Username</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- View 3: Lobby / Matchmaking -->
+    <div class="view" id="viewLobby" style="display: none;">
+      <div class="card lobby-card">
+        <div class="lobby-header">
+          <h2>Select a Game</h2>
+          <p class="subtitle">Match with another player in real-time</p>
+        </div>
+
+        <div class="game-cards">
+          <!-- Tic Tac Toe Card -->
+          <div class="game-card active" data-game="ttt" id="cardTTT">
+            <div class="game-card-icon">❌⭕</div>
+            <div class="game-card-info">
+              <h3>Tic-Tac-Toe</h3>
+              <p>Classic 3-in-a-row multiplayer showdown.</p>
+            </div>
+            <div class="radio-check">✓</div>
+          </div>
+
+          <!-- Connect 4 Card -->
+          <div class="game-card" data-game="c4" id="cardC4">
+            <div class="game-card-icon">🔴🟡</div>
+            <div class="game-card-info">
+              <h3>Connect 4</h3>
+              <p>Drop checkers & connect 4 in a row to win.</p>
+            </div>
+            <div class="radio-check"></div>
+          </div>
+        </div>
+
+        <div class="queue-status" id="queueStatus" style="display: none;">
+          <div class="pulse-ring"></div>
+          <p id="queueStatusText">Searching for an opponent...</p>
+          <button class="btn btn-secondary" id="btnCancelQueue">Cancel Search</button>
+        </div>
+
+        <button class="btn btn-primary btn-lg" id="btnFindMatch">Find Match ⚔️</button>
+      </div>
+    </div>
+
+    <!-- View 4: Game Arena -->
+    <div class="view" id="viewArena" style="display: none;">
+      <!-- Match Header -->
+      <div class="match-scoreboard">
+        <div class="player-badge you" id="p1Badge">
+          <span class="p-symbol" id="youSymbol">X</span>
+          <div class="p-info">
+            <strong id="youName">You</strong>
+            <small id="youRating">1000 ELO</small>
+          </div>
+        </div>
+
+        <div class="vs-pill">VS</div>
+
+        <div class="player-badge opp" id="p2Badge">
+          <span class="p-symbol" id="oppSymbol">O</span>
+          <div class="p-info">
+            <strong id="oppName">Opponent</strong>
+            <small id="oppRating">1000 ELO</small>
+          </div>
+        </div>
+      </div>
+
+      <!-- Turn Indicator Banner -->
+      <div class="turn-banner" id="turnBanner">
+        <span class="turn-dot"></span>
+        <span id="turnText">Your Turn!</span>
+      </div>
+
+      <!-- Game Board Container -->
+      <div class="board-wrapper">
+        <!-- Tic-Tac-Toe Board (3x3) -->
+        <div class="board-ttt" id="boardTTT" style="display: none;">
+          <button class="ttt-cell" data-pos="0"></button>
+          <button class="ttt-cell" data-pos="1"></button>
+          <button class="ttt-cell" data-pos="2"></button>
+          <button class="ttt-cell" data-pos="3"></button>
+          <button class="ttt-cell" data-pos="4"></button>
+          <button class="ttt-cell" data-pos="5"></button>
+          <button class="ttt-cell" data-pos="6"></button>
+          <button class="ttt-cell" data-pos="7"></button>
+          <button class="ttt-cell" data-pos="8"></button>
+        </div>
+
+        <!-- Connect 4 Board (6x7) -->
+        <div class="board-c4" id="boardC4" style="display: none;">
+          <div class="c4-col-buttons" id="c4ColButtons">
+            <button class="c4-drop-btn" data-col="0">▼</button>
+            <button class="c4-drop-btn" data-col="1">▼</button>
+            <button class="c4-drop-btn" data-col="2">▼</button>
+            <button class="c4-drop-btn" data-col="3">▼</button>
+            <button class="c4-drop-btn" data-col="4">▼</button>
+            <button class="c4-drop-btn" data-col="5">▼</button>
+            <button class="c4-drop-btn" data-col="6">▼</button>
+          </div>
+          <div class="c4-grid" id="c4Grid"></div>
+        </div>
+      </div>
+
+      <div class="arena-footer">
+        <button class="btn btn-danger btn-sm" id="btnResign">Forfeit Game</button>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Game Over Modal Overlay -->
+  <div class="modal-overlay" id="modalGameOver" style="display: none;">
+    <div class="card modal-card animate-pop">
+      <div class="result-icon" id="resultIcon">🏆</div>
+      <h2 id="resultTitle">Victory!</h2>
+      <p class="subtitle" id="resultSubtitle">You won the match</p>
+      
+      <div class="rating-box">
+        <span>Rating Change:</span>
+        <strong id="ratingChange">+25 ELO</strong>
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn btn-primary" id="btnPlayAgain">Play Again</button>
+        <button class="btn btn-secondary" id="btnBackToLobby">Back to Lobby</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Leaderboard Modal Overlay -->
+  <div class="modal-overlay" id="modalLeaderboard" style="display: none;">
+    <div class="card modal-card leaderboard-modal">
+      <div class="lb-header">
+        <h2>🏆 Global Leaderboard</h2>
+        <button class="close-btn" id="btnCloseLeaderboard">✕</button>
+      </div>
+      <div class="lb-list" id="leaderboardList">
+        <div class="spinner"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
