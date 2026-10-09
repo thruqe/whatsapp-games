@@ -3,22 +3,46 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>WhatsApp Webview Games</title>
+  <title>WhatsRook Games</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <!-- Ambient background glow -->
+  <div class="ambient-glow"></div>
+  <div class="grid-overlay"></div>
+
   <!-- Header Bar -->
   <header class="app-header">
     <div class="brand">
-      <span class="brand-icon">🎮</span>
-      <span class="brand-title">WhatsRook Games</span>
+      <svg class="vercel-logo" width="18" height="18" viewBox="0 0 115 100" fill="currentColor">
+        <polygon points="57.5,0 115,100 0,100"></polygon>
+      </svg>
+      <span class="brand-title">WhatsRook</span>
+      <span class="brand-divider">/</span>
+      <span class="brand-sub">games</span>
     </div>
-    <div class="user-chip" id="userChip" style="display: none;">
-      <span class="avatar-icon">👤</span>
-      <span id="headerUsername">...</span>
-      <span class="badge" id="headerRating">1000 ELO</span>
+
+    <div class="header-right">
+      <div class="user-chip" id="userChip" style="display: none;">
+        <span class="status-dot"></span>
+        <span class="user-name" id="headerUsername">player</span>
+        <span class="badge-mono" id="headerRating">1000 ELO</span>
+      </div>
+      <button class="icon-btn" id="btnOpenLeaderboard" aria-label="Leaderboard" title="Global Leaderboard">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"></path>
+          <path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"></path>
+          <path d="M4 22h16"></path>
+          <path d="M10 14.66V17c0 .55-.45 1-1 1H7c-.55 0-1-.45-1-1v-2.34"></path>
+          <path d="M18 14.66V17c0 .55-.45 1-1 1h-2c-.55 0-1-.45-1-1v-2.34"></path>
+          <path d="M14 22v-4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v4"></path>
+          <path d="M18 2H6v7a6 6 0 0 0 12 0V2z"></path>
+        </svg>
+      </button>
     </div>
-    <button class="icon-btn" id="btnOpenLeaderboard" title="Leaderboard">🏆</button>
   </header>
 
   <!-- Main Container -->
@@ -27,26 +51,26 @@
     <!-- View 1: Connecting / Loading -->
     <div class="view" id="viewLoading">
       <div class="card center-card">
-        <div class="spinner"></div>
-        <h2>Connecting to Game Server...</h2>
-        <p class="subtitle" id="connectionStatus">Authenticating bot session...</p>
+        <div class="geist-spinner"></div>
+        <h2>Initializing Session</h2>
+        <p class="subtitle" id="connectionStatus">Authenticating via WhatsApp bot handshake...</p>
       </div>
     </div>
 
     <!-- View 2: Username Registration Modal -->
     <div class="view" id="viewUsername" style="display: none;">
       <div class="card modal-card">
-        <div class="modal-icon">🏷️</div>
-        <h2>Choose Your Gamer Tag</h2>
-        <p class="subtitle">Please enter a unique username to represent you on the global leaderboard.</p>
+        <div class="tag-pill">ACCOUNT SETUP</div>
+        <h2>Claim Your Gamer Tag</h2>
+        <p class="subtitle">Choose a unique username for multiplayer matchmaking and leaderboard tracking.</p>
         
         <form id="usernameForm">
-          <div class="input-group">
+          <div class="input-wrapper">
             <span class="input-prefix">@</span>
-            <input type="text" id="usernameInput" placeholder="Enter unique username..." maxlength="20" required autocomplete="off">
+            <input type="text" id="usernameInput" placeholder="username" maxlength="20" required autocomplete="off" spellcheck="false">
           </div>
           <div class="error-msg" id="usernameError"></div>
-          <button type="submit" class="btn btn-primary" id="btnSubmitUsername">Confirm Username</button>
+          <button type="submit" class="btn btn-primary" id="btnSubmitUsername">Continue →</button>
         </form>
       </div>
     </div>
@@ -55,39 +79,56 @@
     <div class="view" id="viewLobby" style="display: none;">
       <div class="card lobby-card">
         <div class="lobby-header">
-          <h2>Select a Game</h2>
-          <p class="subtitle">Match with another player in real-time</p>
+          <div class="tag-pill">MULTIPLAYER ARENA</div>
+          <h2>Select Game Mode</h2>
+          <p class="subtitle">Real-time matchmaking powered by low-latency WebSockets</p>
         </div>
 
         <div class="game-cards">
           <!-- Tic Tac Toe Card -->
           <div class="game-card active" data-game="ttt" id="cardTTT">
-            <div class="game-card-icon">❌⭕</div>
-            <div class="game-card-info">
-              <h3>Tic-Tac-Toe</h3>
-              <p>Classic 3-in-a-row multiplayer showdown.</p>
+            <div class="game-card-header">
+              <span class="game-card-title">Tic-Tac-Toe</span>
+              <span class="badge-mini">3×3 Grid</span>
             </div>
-            <div class="radio-check">✓</div>
+            <p class="game-card-desc">Fast-paced tactical 3-in-a-row showdown.</p>
+            <div class="game-card-footer">
+              <span class="badge-tag">ELO RANKED</span>
+              <span class="card-status-dot"></span>
+            </div>
           </div>
 
           <!-- Connect 4 Card -->
           <div class="game-card" data-game="c4" id="cardC4">
-            <div class="game-card-icon">🔴🟡</div>
-            <div class="game-card-info">
-              <h3>Connect 4</h3>
-              <p>Drop checkers & connect 4 in a row to win.</p>
+            <div class="game-card-header">
+              <span class="game-card-title">Connect 4</span>
+              <span class="badge-mini">7×6 Columns</span>
             </div>
-            <div class="radio-check"></div>
+            <p class="game-card-desc">Gravity checker drops. Connect 4 lines to claim victory.</p>
+            <div class="game-card-footer">
+              <span class="badge-tag">ELO RANKED</span>
+              <span class="card-status-dot"></span>
+            </div>
           </div>
         </div>
 
+        <!-- Queue Status Bar -->
         <div class="queue-status" id="queueStatus" style="display: none;">
-          <div class="pulse-ring"></div>
-          <p id="queueStatusText">Searching for an opponent...</p>
-          <button class="btn btn-secondary" id="btnCancelQueue">Cancel Search</button>
+          <div class="radar-ping"></div>
+          <div class="queue-info">
+            <p id="queueStatusText">Searching for an opponent...</p>
+            <span class="queue-sub">Estimated wait: &lt; 5s</span>
+          </div>
+          <button class="btn btn-ghost btn-sm" id="btnCancelQueue">Cancel</button>
         </div>
 
-        <button class="btn btn-primary btn-lg" id="btnFindMatch">Find Match ⚔️</button>
+        <button class="btn btn-primary btn-lg" id="btnFindMatch">
+          <span>Find Match</span>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+            <polyline points="12 5 19 12 12 19"></polyline>
+          </svg>
+        </button>
       </div>
     </div>
 
@@ -95,29 +136,31 @@
     <div class="view" id="viewArena" style="display: none;">
       <!-- Match Header -->
       <div class="match-scoreboard">
-        <div class="player-badge you" id="p1Badge">
-          <span class="p-symbol" id="youSymbol">X</span>
-          <div class="p-info">
-            <strong id="youName">You</strong>
-            <small id="youRating">1000 ELO</small>
+        <div class="player-card you" id="p1Badge">
+          <div class="player-avatar" id="youSymbol">✕</div>
+          <div class="p-details">
+            <span class="p-name" id="youName">You</span>
+            <span class="p-rating" id="youRating">1000 ELO</span>
           </div>
         </div>
 
-        <div class="vs-pill">VS</div>
+        <div class="vs-divider">
+          <span>VS</span>
+        </div>
 
-        <div class="player-badge opp" id="p2Badge">
-          <span class="p-symbol" id="oppSymbol">O</span>
-          <div class="p-info">
-            <strong id="oppName">Opponent</strong>
-            <small id="oppRating">1000 ELO</small>
+        <div class="player-card opp" id="p2Badge">
+          <div class="player-avatar opp-avatar" id="oppSymbol">○</div>
+          <div class="p-details">
+            <span class="p-name" id="oppName">Opponent</span>
+            <span class="p-rating" id="oppRating">1000 ELO</span>
           </div>
         </div>
       </div>
 
       <!-- Turn Indicator Banner -->
       <div class="turn-banner" id="turnBanner">
-        <span class="turn-dot"></span>
-        <span id="turnText">Your Turn!</span>
+        <span class="live-indicator"></span>
+        <span id="turnText">YOUR TURN</span>
       </div>
 
       <!-- Game Board Container -->
@@ -138,20 +181,20 @@
         <!-- Connect 4 Board (6x7) -->
         <div class="board-c4" id="boardC4" style="display: none;">
           <div class="c4-col-buttons" id="c4ColButtons">
-            <button class="c4-drop-btn" data-col="0">▼</button>
-            <button class="c4-drop-btn" data-col="1">▼</button>
-            <button class="c4-drop-btn" data-col="2">▼</button>
-            <button class="c4-drop-btn" data-col="3">▼</button>
-            <button class="c4-drop-btn" data-col="4">▼</button>
-            <button class="c4-drop-btn" data-col="5">▼</button>
-            <button class="c4-drop-btn" data-col="6">▼</button>
+            <button class="c4-drop-btn" data-col="0">↓</button>
+            <button class="c4-drop-btn" data-col="1">↓</button>
+            <button class="c4-drop-btn" data-col="2">↓</button>
+            <button class="c4-drop-btn" data-col="3">↓</button>
+            <button class="c4-drop-btn" data-col="4">↓</button>
+            <button class="c4-drop-btn" data-col="5">↓</button>
+            <button class="c4-drop-btn" data-col="6">↓</button>
           </div>
           <div class="c4-grid" id="c4Grid"></div>
         </div>
       </div>
 
       <div class="arena-footer">
-        <button class="btn btn-danger btn-sm" id="btnResign">Forfeit Game</button>
+        <button class="btn btn-danger-outline btn-sm" id="btnResign">Forfeit Match</button>
       </div>
     </div>
 
@@ -160,13 +203,13 @@
   <!-- Game Over Modal Overlay -->
   <div class="modal-overlay" id="modalGameOver" style="display: none;">
     <div class="card modal-card animate-pop">
-      <div class="result-icon" id="resultIcon">🏆</div>
-      <h2 id="resultTitle">Victory!</h2>
-      <p class="subtitle" id="resultSubtitle">You won the match</p>
+      <div class="result-badge" id="resultIcon">WIN</div>
+      <h2 id="resultTitle">Victory</h2>
+      <p class="subtitle" id="resultSubtitle">Match concluded successfully.</p>
       
-      <div class="rating-box">
-        <span>Rating Change:</span>
-        <strong id="ratingChange">+25 ELO</strong>
+      <div class="stat-row">
+        <span class="stat-label">ELO ADJUSTMENT</span>
+        <span class="stat-value" id="ratingChange">+25 ELO</span>
       </div>
 
       <div class="modal-actions">
@@ -180,11 +223,12 @@
   <div class="modal-overlay" id="modalLeaderboard" style="display: none;">
     <div class="card modal-card leaderboard-modal">
       <div class="lb-header">
-        <h2>🏆 Global Leaderboard</h2>
-        <button class="close-btn" id="btnCloseLeaderboard">✕</button>
+        <div class="tag-pill">RANKINGS</div>
+        <h2>Global Leaderboard</h2>
+        <button class="close-btn" id="btnCloseLeaderboard" aria-label="Close">✕</button>
       </div>
       <div class="lb-list" id="leaderboardList">
-        <div class="spinner"></div>
+        <div class="geist-spinner"></div>
       </div>
     </div>
   </div>

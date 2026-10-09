@@ -1,4 +1,4 @@
-// WhatsApp Webview Games Client
+// Antigravity x Vercel Webview Games Client
 (function() {
   const urlParams = new URLSearchParams(window.location.search);
   const sessionID = urlParams.get('session') || '';
@@ -70,6 +70,29 @@
   function showView(view) {
     [viewLoading, viewUsername, viewLobby, viewArena].forEach(v => {
       v.style.display = (v === view) ? 'flex' : 'none';
+    });
+  }
+
+  // Antigravity 3D Spatial Tilt Interactions
+  function initSpatialTilt() {
+    const cards = document.querySelectorAll('.game-card, .card');
+    cards.forEach(card => {
+      card.addEventListener('mousemove', (e) => {
+        const rect = card.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        const centerX = rect.width / 2;
+        const centerY = rect.height / 2;
+
+        const rotateX = ((centerY - y) / centerY) * 4;
+        const rotateY = ((x - centerX) / centerX) * 4;
+
+        card.style.transform = `perspective(1000px) rotateX(${rotateX}deg) rotateY(${rotateY}deg) translateY(-2px)`;
+      });
+
+      card.addEventListener('mouseleave', () => {
+        card.style.transform = 'perspective(1000px) rotateX(0deg) rotateY(0deg) translateY(0)';
+      });
     });
   }
 
@@ -175,7 +198,7 @@
 
   function updateUserDisplay() {
     userChip.style.display = 'flex';
-    headerUsername.textContent = currentUser.username;
+    headerUsername.textContent = `@${currentUser.username}`;
     headerRating.textContent = `${currentUser.rating} ELO`;
   }
 
@@ -220,11 +243,11 @@
     mySymbol = payload.you.symbol;
 
     youSymbol.textContent = payload.you.symbol;
-    youName.textContent = payload.you.username;
+    youName.textContent = `@${payload.you.username}`;
     youRating.textContent = `${payload.you.rating} ELO`;
 
     oppSymbol.textContent = payload.opponent.symbol;
-    oppName.textContent = payload.opponent.username;
+    oppName.textContent = `@${payload.opponent.username}`;
     oppRating.textContent = `${payload.opponent.rating} ELO`;
 
     updateTurnBanner(isMyTurn);
@@ -248,10 +271,10 @@
     isMyTurn = myTurn;
     if (myTurn) {
       turnBanner.className = 'turn-banner your-turn';
-      turnText.textContent = "Your Turn! (Tap to play)";
+      turnText.textContent = "YOUR TURN";
     } else {
       turnBanner.className = 'turn-banner';
-      turnText.textContent = "Opponent's Turn...";
+      turnText.textContent = "WAITING FOR OPPONENT...";
     }
   }
 
@@ -268,23 +291,29 @@
     modalGameOver.style.display = 'flex';
 
     if (payload.is_winner) {
-      resultIcon.textContent = "🏆";
-      resultTitle.textContent = "Victory!";
-      resultSubtitle.textContent = "You won the match!";
+      resultIcon.textContent = "VICTORY";
+      resultIcon.style.color = "var(--accent-emerald)";
+      resultIcon.style.borderColor = "var(--accent-emerald)";
+      resultTitle.textContent = "Match Won";
+      resultSubtitle.textContent = "You defeated your opponent.";
       ratingChange.textContent = `+${payload.rating_delta} ELO`;
-      ratingChange.style.color = "var(--accent-green)";
+      ratingChange.style.color = "var(--accent-emerald)";
     } else if (payload.is_draw) {
-      resultIcon.textContent = "🤝";
-      resultTitle.textContent = "Draw!";
-      resultSubtitle.textContent = "A well-matched battle!";
+      resultIcon.textContent = "DRAW";
+      resultIcon.style.color = "var(--text-primary)";
+      resultIcon.style.borderColor = "var(--surface-border-bright)";
+      resultTitle.textContent = "Stalemate";
+      resultSubtitle.textContent = "Match concluded in a balanced draw.";
       ratingChange.textContent = `+${payload.rating_delta} ELO`;
-      ratingChange.style.color = "var(--accent-teal)";
+      ratingChange.style.color = "var(--text-primary)";
     } else {
-      resultIcon.textContent = "😔";
-      resultTitle.textContent = "Defeat";
-      resultSubtitle.textContent = `${payload.winner_name || 'Opponent'} won the match.`;
+      resultIcon.textContent = "DEFEAT";
+      resultIcon.style.color = "var(--accent-danger)";
+      resultIcon.style.borderColor = "var(--accent-danger)";
+      resultTitle.textContent = "Match Lost";
+      resultSubtitle.textContent = `@${payload.winner_name || 'Opponent'} claimed victory.`;
       ratingChange.textContent = `${payload.rating_delta} ELO`;
-      ratingChange.style.color = "var(--danger)";
+      ratingChange.style.color = "var(--accent-danger)";
     }
 
     currentUser.rating = Math.max(100, currentUser.rating + payload.rating_delta);
@@ -367,12 +396,12 @@
   });
 
   btnResign.addEventListener('click', () => {
-    if (confirm("Are you sure you want to forfeit this game?")) {
+    if (confirm("Forfeit this match? Rating will be updated accordingly.")) {
       sendAction('leave_game', {});
     }
   });
 
-  // Leaderboard Modal
+  // Leaderboard Modal (Vercel Analytics Row Style)
   btnOpenLeaderboard.addEventListener('click', loadLeaderboard);
   btnCloseLeaderboard.addEventListener('click', () => {
     modalLeaderboard.style.display = 'none';
@@ -380,30 +409,28 @@
 
   async function loadLeaderboard() {
     modalLeaderboard.style.display = 'flex';
-    leaderboardList.innerHTML = '<div class="spinner"></div>';
+    leaderboardList.innerHTML = '<div class="geist-spinner"></div>';
 
     try {
       const resp = await fetch('/api/leaderboard');
       const data = await resp.json();
 
       if (!data || data.length === 0) {
-        leaderboardList.innerHTML = '<p class="subtitle">No ranked players yet. Be the first!</p>';
+        leaderboardList.innerHTML = '<p class="subtitle" style="text-align: center;">No ranked players yet. Be the first to compete!</p>';
         return;
       }
 
       leaderboardList.innerHTML = data.map((entry, idx) => {
-        let medal = `#${idx + 1}`;
-        if (idx === 0) medal = '🥇';
-        if (idx === 1) medal = '🥈';
-        if (idx === 2) medal = '🥉';
+        const rankStr = String(idx + 1).padStart(2, '0');
+        const isTop = idx === 0;
 
         return `
           <div class="lb-item">
             <div class="lb-left">
-              <span class="lb-rank">${medal}</span>
+              <span class="lb-rank" style="${isTop ? 'color: var(--accent-emerald); font-weight: 800;' : ''}">#${rankStr}</span>
               <div>
                 <div class="lb-name">@${entry.username}</div>
-                <small style="color: var(--text-sub);">${entry.wins}W / ${entry.losses}L / ${entry.draws}D</small>
+                <span class="lb-record">${entry.wins}W · ${entry.losses}L · ${entry.draws}D</span>
               </div>
             </div>
             <span class="lb-rating">${entry.rating} ELO</span>
@@ -411,10 +438,11 @@
         `;
       }).join('');
     } catch (e) {
-      leaderboardList.innerHTML = '<p class="subtitle" style="color: var(--danger);">Failed to load leaderboard.</p>';
+      leaderboardList.innerHTML = '<p class="subtitle" style="color: var(--accent-danger); text-align: center;">Failed to load leaderboard data.</p>';
     }
   }
 
-  // Start app
+  // Initialize
+  initSpatialTilt();
   initWebSocket();
 })();
