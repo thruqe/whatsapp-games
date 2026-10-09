@@ -29,9 +29,10 @@
       <div class="user-chip" id="userChip" style="display: none;">
         <span class="status-dot"></span>
         <span class="user-name" id="headerUsername">player</span>
-        <span class="badge-mono" id="headerRating">1000 ELO</span>
+        <span class="badge-mono" id="headerPoints">0 PTS</span>
+        <span class="badge-mono" id="headerDiff" style="color: var(--accent-emerald);">±0</span>
       </div>
-      <button class="icon-btn" id="btnOpenLeaderboard" aria-label="Leaderboard" title="Global Leaderboard">
+      <button class="icon-btn" id="btnOpenLeaderboard" aria-label="Leaderboard" title="Leaderboards">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"></path>
           <path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"></path>
@@ -93,7 +94,7 @@
             </div>
             <p class="game-card-desc">Fast-paced tactical 3-in-a-row showdown.</p>
             <div class="game-card-footer">
-              <span class="badge-tag">ELO RANKED</span>
+              <span class="badge-tag">POINTS RANKED</span>
               <span class="card-status-dot"></span>
             </div>
           </div>
@@ -106,7 +107,20 @@
             </div>
             <p class="game-card-desc">Gravity checker drops. Connect 4 lines to claim victory.</p>
             <div class="game-card-footer">
-              <span class="badge-tag">ELO RANKED</span>
+              <span class="badge-tag">POINTS RANKED</span>
+              <span class="card-status-dot"></span>
+            </div>
+          </div>
+
+          <!-- Word Chain Game (WCG) Card -->
+          <div class="game-card" data-game="wcg" id="cardWCG">
+            <div class="game-card-header">
+              <span class="game-card-title">Word Chain</span>
+              <span class="badge-mini">WCG English</span>
+            </div>
+            <p class="game-card-desc">Chain English words. Start each word with opponent's last letter.</p>
+            <div class="game-card-footer">
+              <span class="badge-tag">POINTS RANKED</span>
               <span class="card-status-dot"></span>
             </div>
           </div>
@@ -140,7 +154,7 @@
           <div class="player-avatar" id="youSymbol">✕</div>
           <div class="p-details">
             <span class="p-name" id="youName">You</span>
-            <span class="p-rating" id="youRating">1000 ELO</span>
+            <span class="p-rating" id="youPoints">0 PTS (±0)</span>
           </div>
         </div>
 
@@ -152,7 +166,7 @@
           <div class="player-avatar opp-avatar" id="oppSymbol">○</div>
           <div class="p-details">
             <span class="p-name" id="oppName">Opponent</span>
-            <span class="p-rating" id="oppRating">1000 ELO</span>
+            <span class="p-rating" id="oppPoints">0 PTS (±0)</span>
           </div>
         </div>
       </div>
@@ -191,6 +205,34 @@
           </div>
           <div class="c4-grid" id="c4Grid"></div>
         </div>
+
+        <!-- Word Chain Game (WCG) Board -->
+        <div class="board-wcg" id="boardWCG" style="display: none;">
+          <div class="wcg-control-bar">
+            <div class="wcg-req-box">
+              <span class="wcg-box-label">REQUIRED LETTER</span>
+              <span class="wcg-req-char" id="wcgReqLetter">A</span>
+            </div>
+            <div class="wcg-stats-box">
+              <div class="wcg-score-line">
+                <span>Score: <b id="wcgScore">0</b></span>
+                <span>Strikes: <b id="wcgStrikes" style="color: var(--accent-danger);">0/3</b></span>
+              </div>
+            </div>
+          </div>
+
+          <div class="wcg-chain-stream" id="wcgChainStream">
+            <div class="wcg-empty-hint">Chain started! Type a word starting with the required letter.</div>
+          </div>
+
+          <form class="wcg-form" id="wcgForm">
+            <div class="wcg-input-group">
+              <input type="text" id="wcgWordInput" class="wcg-input" placeholder="Type your word..." autocomplete="off" autocapitalize="none" spellcheck="false" />
+              <button type="submit" class="btn btn-primary btn-sm" id="btnSubmitWord">Submit</button>
+            </div>
+            <div class="error-msg" id="wcgError" style="margin-top: 6px; text-align: left;"></div>
+          </form>
+        </div>
       </div>
 
       <div class="arena-footer">
@@ -208,8 +250,12 @@
       <p class="subtitle" id="resultSubtitle">Match concluded successfully.</p>
       
       <div class="stat-row">
-        <span class="stat-label">ELO ADJUSTMENT</span>
-        <span class="stat-value" id="ratingChange">+25 ELO</span>
+        <span class="stat-label">POINTS EARNED</span>
+        <span class="stat-value" id="pointsChange">+25 PTS</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">POINTS DIFF</span>
+        <span class="stat-value" id="diffChange">+25</span>
       </div>
 
       <div class="modal-actions">
@@ -224,9 +270,18 @@
     <div class="card modal-card leaderboard-modal">
       <div class="lb-header">
         <div class="tag-pill">RANKINGS</div>
-        <h2>Global Leaderboard</h2>
+        <h2>Leaderboards</h2>
         <button class="close-btn" id="btnCloseLeaderboard" aria-label="Close">✕</button>
       </div>
+
+      <!-- Tabs: Global & Game-Specific -->
+      <div class="lb-tabs" id="lbTabs">
+        <button class="lb-tab active" data-game="global">Global</button>
+        <button class="lb-tab" data-game="ttt">Tic-Tac-Toe</button>
+        <button class="lb-tab" data-game="c4">Connect 4</button>
+        <button class="lb-tab" data-game="wcg">Word Chain</button>
+      </div>
+
       <div class="lb-list" id="leaderboardList">
         <div class="geist-spinner"></div>
       </div>

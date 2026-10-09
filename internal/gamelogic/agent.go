@@ -17,12 +17,16 @@ import (
 
 // PlayerState tracks the in-memory activity of a player session.
 type PlayerState struct {
-	SessionID string
-	UserJID   string
-	Username  string
-	Rating    int
-	Status    string // "idle", "queued", "in_game"
-	GameType  string
+	SessionID  string
+	UserJID    string
+	Username   string
+	Points     int
+	Wins       int
+	Losses     int
+	Draws      int
+	PointsDiff int
+	Status     string // "idle", "queued", "in_game"
+	GameType   string
 }
 
 // Agent coordinates game state updates, matchmaking, and rules.
@@ -90,14 +94,17 @@ func (a *Agent) getOrCreatePlayer(sessionID string) *PlayerState {
 	if !exists {
 		p = &PlayerState{
 			SessionID: sessionID,
-			Rating:    1000,
 			Status:    "idle",
 		}
 		// Check if exists in DB
 		if profile, err := a.dbSvc.GetProfileBySession(sessionID); err == nil && profile != nil {
 			p.Username = profile.Username
 			p.UserJID = profile.UserJID
-			p.Rating = profile.Rating
+			p.Points = profile.Points
+			p.Wins = profile.Wins
+			p.Losses = profile.Losses
+			p.Draws = profile.Draws
+			p.PointsDiff = profile.PointsDiff
 		}
 		a.players[sessionID] = p
 	}
@@ -109,10 +116,14 @@ func (a *Agent) handleGetProfile(sessionID string) {
 	_ = a.connMgr.SendToSession(sessionID, connmanager.OutboundMessage{
 		Type: "profile",
 		Payload: map[string]any{
-			"session_id": p.SessionID,
-			"username":   p.Username,
-			"rating":     p.Rating,
-			"status":     p.Status,
+			"session_id":  p.SessionID,
+			"username":    p.Username,
+			"points":      p.Points,
+			"wins":        p.Wins,
+			"losses":      p.Losses,
+			"draws":       p.Draws,
+			"points_diff": p.PointsDiff,
+			"status":      p.Status,
 		},
 	})
 }
@@ -155,7 +166,7 @@ func (a *Agent) handleSetUsername(sessionID string, payload json.RawMessage) {
 	a.playersMu.Lock()
 	p := a.players[sessionID]
 	if p == nil {
-		p = &PlayerState{SessionID: sessionID, Rating: 1000, Status: "idle"}
+		p = &PlayerState{SessionID: sessionID, Status: "idle"}
 		a.players[sessionID] = p
 	}
 	p.Username = cleanName
@@ -167,19 +178,23 @@ func (a *Agent) handleSetUsername(sessionID string, payload json.RawMessage) {
 	_ = a.connMgr.SendToSession(sessionID, connmanager.OutboundMessage{
 		Type: "username_set",
 		Payload: map[string]any{
-			"username": cleanName,
-			"rating":   p.Rating,
+			"username":    cleanName,
+			"points":      p.Points,
+			"wins":        p.Wins,
+			"losses":      p.Losses,
+			"draws":       p.Draws,
+			"points_diff": p.PointsDiff,
 		},
 	})
 }
 
 func (a *Agent) handleFindMatch(sessionID string, payload json.RawMessage) {
 	var req struct {
-		GameType string `json:"game_type"` // "ttt" or "c4"
+		GameType string `json:"game_type"` // "ttt", "c4", "wcg"
 	}
 	_ = json.Unmarshal(payload, &req)
 	gameType := strings.ToLower(req.GameType)
-	if gameType == "" || (gameType != "ttt" && gameType != "c4") {
+	if gameType == "" || (gameType != "ttt" && gameType != "c4" && gameType != "wcg") {
 		gameType = "ttt"
 	}
 
@@ -272,20 +287,22 @@ func (a *Agent) triggerBotMatch(humanSession, gameType string) {
 	botName := GenerateUniqueBotName()
 	rVal, _ := rand.Int(rand.Reader, big.NewInt(0xFFFF))
 	botSession := fmt.Sprintf("bot_%04x", rVal.Int64())
-	botRating := 960 + randInt(180)
+	botPoints := 25 + randInt(100)
+	botDiff := randInt(50)
 
 	a.playersMu.Lock()
 	a.players[botSession] = &PlayerState{
-		SessionID: botSession,
-		Username:  botName,
-		Rating:    botRating,
-		Status:    "in_game",
-		GameType:  gameType,
+		SessionID:  botSession,
+		Username:   botName,
+		Points:     botPoints,
+		PointsDiff: botDiff,
+		Status:     "in_game",
+		GameType:   gameType,
 	}
 	a.playersMu.Unlock()
 
-	log.Printf("[GameLogic] Matchmaking 25s expired for %s. Matching with automated bot %s (Rating: %d)",
-		humanSession, botName, botRating)
+	log.Printf("[GameLogic] Matchmaking 25s expired for %s. Matching with automated bot %s (Points: %d)",
+		humanSession, botName, botPoints)
 
 	go a.startMatch(gameType, humanSession, botSession)
 }
@@ -326,16 +343,18 @@ func (a *Agent) startMatch(gameType, p1Session, p2Session string) {
 	p2State := a.getOrCreatePlayer(p2Session)
 
 	p1Info := PlayerInfo{
-		SessionID: p1Session,
-		Username:  p1State.Username,
-		UserJID:   p1State.UserJID,
-		Rating:    p1State.Rating,
+		SessionID:  p1Session,
+		Username:   p1State.Username,
+		UserJID:    p1State.UserJID,
+		Points:     p1State.Points,
+		PointsDiff: p1State.PointsDiff,
 	}
 	p2Info := PlayerInfo{
-		SessionID: p2Session,
-		Username:  p2State.Username,
-		UserJID:   p2State.UserJID,
-		Rating:    p2State.Rating,
+		SessionID:  p2Session,
+		Username:   p2State.Username,
+		UserJID:    p2State.UserJID,
+		Points:     p2State.Points,
+		PointsDiff: p2State.PointsDiff,
 	}
 
 	room := newRoom(gameType, p1Info, p2Info)
@@ -394,6 +413,17 @@ func (a *Agent) getGameBoard(room *Room) any {
 		return room.TTT.Board
 	} else if room.GameType == "c4" && room.C4 != nil {
 		return room.C4.Board
+	} else if room.GameType == "wcg" && room.WCG != nil {
+		return map[string]any{
+			"required_letter": room.WCG.RequiredLetter,
+			"min_length":      room.WCG.MinLength,
+			"chain":           room.WCG.Chain,
+			"p1_score":        room.WCG.P1Score,
+			"p2_score":        room.WCG.P2Score,
+			"p1_strikes":      room.WCG.P1Strikes,
+			"p2_strikes":      room.WCG.P2Strikes,
+			"move_count":      room.WCG.MoveCount,
+		}
 	}
 	return nil
 }
@@ -450,6 +480,19 @@ func (a *Agent) handleMakeMove(sessionID string, payload json.RawMessage) {
 		if err == nil {
 			moveResult = room.C4.CheckWinner()
 		}
+	} else if room.GameType == "wcg" && room.WCG != nil {
+		var req struct {
+			Word string `json:"word"`
+		}
+		if err = json.Unmarshal(payload, &req); err != nil {
+			_ = a.connMgr.SendToSession(sessionID, connmanager.OutboundMessage{Type: "error", Error: "invalid word payload"})
+			return
+		}
+		playerName := room.Player1.Username
+		if sessionID == room.Player2.SessionID {
+			playerName = room.Player2.Username
+		}
+		_, moveResult, err = room.WCG.SubmitWord(req.Word, room.TurnSymbol, playerName)
 	}
 
 	if err != nil {
@@ -457,6 +500,33 @@ func (a *Agent) handleMakeMove(sessionID string, payload json.RawMessage) {
 			Type:  "error",
 			Error: err.Error(),
 		})
+		// If strike-out ended the game:
+		if moveResult != "" {
+			a.finishMatch(room, moveResult)
+			return
+		}
+		// In WCG, broadcast board update so strikes update on UI
+		if room.GameType == "wcg" {
+			board := a.getGameBoard(room)
+			_ = a.connMgr.SendToSession(room.Player1.SessionID, connmanager.OutboundMessage{
+				Type: "move_update",
+				Payload: map[string]any{
+					"board":       board,
+					"your_turn":   room.TurnSession == room.Player1.SessionID,
+					"turn_symbol": room.TurnSymbol,
+				},
+			})
+			if !room.IsBot {
+				_ = a.connMgr.SendToSession(room.Player2.SessionID, connmanager.OutboundMessage{
+					Type: "move_update",
+					Payload: map[string]any{
+						"board":       board,
+						"your_turn":   room.TurnSession == room.Player2.SessionID,
+						"turn_symbol": room.TurnSymbol,
+					},
+				})
+			}
+		}
 		return
 	}
 
@@ -500,25 +570,33 @@ func (a *Agent) finishMatch(room *Room, winnerSymbol string) {
 	p1Session := room.Player1.SessionID
 	p2Session := room.Player2.SessionID
 
-	p1Delta := 0
-	p2Delta := 0
+	p1Points := 0
+	p2Points := 0
+	p1Diff := 0
+	p2Diff := 0
 	winnerSession := ""
 	winnerName := ""
 
 	if winnerSymbol == "draw" {
-		p1Delta = 5
-		p2Delta = 5
+		p1Points = 10
+		p2Points = 10
+		p1Diff = 0
+		p2Diff = 0
 		winnerName = "Draw"
 	} else if winnerSymbol == room.Player1.Symbol {
 		winnerSession = p1Session
 		winnerName = room.Player1.Username
-		p1Delta = 25
-		p2Delta = -15
+		p1Points = 25
+		p2Points = 0
+		p1Diff = 25
+		p2Diff = -25
 	} else {
 		winnerSession = p2Session
 		winnerName = room.Player2.Username
-		p2Delta = 25
-		p1Delta = -15
+		p1Points = 0
+		p2Points = 25
+		p1Diff = -25
+		p2Diff = 25
 	}
 
 	room.WinnerSession = winnerSession
@@ -529,32 +607,52 @@ func (a *Agent) finishMatch(room *Room, winnerSymbol string) {
 		moves = room.TTT.MoveCount
 	} else if room.C4 != nil {
 		moves = room.C4.MoveCount
+	} else if room.WCG != nil {
+		moves = room.WCG.MoveCount
 	}
 
 	// Dispatch InteractionEvent to Database Service through buffered channel
 	evt := db.InteractionEvent{
-		Type:           db.EventMatchResult,
-		Timestamp:      time.Now(),
-		GameType:       room.GameType,
-		Player1Session: p1Session,
-		Player2Session: p2Session,
-		Player1Name:    room.Player1.Username,
-		Player2Name:    room.Player2.Username,
-		WinnerSession:  winnerSession,
-		MovesCount:     moves,
-		Player1Delta:   p1Delta,
-		Player2Delta:   p2Delta,
+		Type:              db.EventMatchResult,
+		Timestamp:         time.Now(),
+		GameType:          room.GameType,
+		Player1Session:    p1Session,
+		Player2Session:    p2Session,
+		Player1Name:       room.Player1.Username,
+		Player2Name:       room.Player2.Username,
+		WinnerSession:     winnerSession,
+		MovesCount:        moves,
+		Player1Points:     p1Points,
+		Player2Points:     p2Points,
+		Player1PointsDiff: p1Diff,
+		Player2PointsDiff: p2Diff,
 	}
 	a.dbSvc.DispatchEvent(evt)
 
-	// Update local player state ratings
+	// Update local player state points and points diff
 	a.playersMu.Lock()
 	if p1 := a.players[p1Session]; p1 != nil {
-		p1.Rating = max(100, p1.Rating+p1Delta)
+		p1.Points += p1Points
+		p1.PointsDiff += p1Diff
+		if winnerSymbol == "draw" {
+			p1.Draws++
+		} else if winnerSession == p1Session {
+			p1.Wins++
+		} else {
+			p1.Losses++
+		}
 		p1.Status = "idle"
 	}
 	if p2 := a.players[p2Session]; p2 != nil {
-		p2.Rating = max(100, p2.Rating+p2Delta)
+		p2.Points += p2Points
+		p2.PointsDiff += p2Diff
+		if winnerSymbol == "draw" {
+			p2.Draws++
+		} else if winnerSession == p2Session {
+			p2.Wins++
+		} else {
+			p2.Losses++
+		}
 		p2.Status = "idle"
 	}
 	a.playersMu.Unlock()
@@ -571,12 +669,13 @@ func (a *Agent) finishMatch(room *Room, winnerSymbol string) {
 	_ = a.connMgr.SendToSession(p1Session, connmanager.OutboundMessage{
 		Type: "game_over",
 		Payload: map[string]any{
-			"board":          board,
-			"winner_session": winnerSession,
-			"winner_name":    winnerName,
-			"is_winner":      winnerSession == p1Session,
-			"is_draw":        winnerSymbol == "draw",
-			"rating_delta":   p1Delta,
+			"board":             board,
+			"winner_session":    winnerSession,
+			"winner_name":       winnerName,
+			"is_winner":         winnerSession == p1Session,
+			"is_draw":           winnerSymbol == "draw",
+			"points_delta":      p1Points,
+			"points_diff_delta": p1Diff,
 		},
 	})
 
@@ -584,12 +683,13 @@ func (a *Agent) finishMatch(room *Room, winnerSymbol string) {
 	_ = a.connMgr.SendToSession(p2Session, connmanager.OutboundMessage{
 		Type: "game_over",
 		Payload: map[string]any{
-			"board":          board,
-			"winner_session": winnerSession,
-			"winner_name":    winnerName,
-			"is_winner":      winnerSession == p2Session,
-			"is_draw":        winnerSymbol == "draw",
-			"rating_delta":   p2Delta,
+			"board":             board,
+			"winner_session":    winnerSession,
+			"winner_name":       winnerName,
+			"is_winner":         winnerSession == p2Session,
+			"is_draw":           winnerSymbol == "draw",
+			"points_delta":      p2Points,
+			"points_diff_delta": p2Diff,
 		},
 	})
 }
@@ -666,6 +766,13 @@ func (a *Agent) scheduleBotMove(roomID string) {
 			if err == nil {
 				moveResult = room.C4.CheckWinner()
 			}
+		}
+	} else if room.GameType == "wcg" && room.WCG != nil {
+		botWord := SelectWCGMove(room.WCG.RequiredLetter, room.WCG.UsedWords)
+		if botWord != "" {
+			_, moveResult, err = room.WCG.SubmitWord(botWord, botSymbol, room.Player2.Username)
+		} else {
+			moveResult = room.Player1.Symbol // Bot cannot find word, player 1 wins
 		}
 	}
 

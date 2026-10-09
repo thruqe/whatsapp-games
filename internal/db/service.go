@@ -27,8 +27,8 @@ type Service struct {
 	wg        sync.WaitGroup
 
 	// Cache for fast username uniqueness checks before batching
-	namesMu  sync.RWMutex
-	nameMap  map[string]string // lowercase username -> sessionID
+	namesMu sync.RWMutex
+	nameMap map[string]string // lowercase username -> sessionID
 }
 
 // NewService initializes SQLite with WAL mode and launches the asynchronous batch worker.
@@ -71,21 +71,31 @@ func NewService(dbPath string, bufferSize int) (*Service, error) {
 }
 
 func (s *Service) initSchema() error {
-	schema := `
+	createTables := `
 	CREATE TABLE IF NOT EXISTS users (
 		session_id TEXT PRIMARY KEY,
 		user_jid TEXT NOT NULL,
 		username TEXT UNIQUE NOT NULL,
-		rating INTEGER NOT NULL DEFAULT 1000,
+		points INTEGER NOT NULL DEFAULT 0,
 		wins INTEGER NOT NULL DEFAULT 0,
 		losses INTEGER NOT NULL DEFAULT 0,
 		draws INTEGER NOT NULL DEFAULT 0,
+		points_diff INTEGER NOT NULL DEFAULT 0,
 		created_at DATETIME NOT NULL,
 		updated_at DATETIME NOT NULL
 	);
 
-	CREATE INDEX IF NOT EXISTS idx_users_rating ON users (rating DESC);
-	CREATE INDEX IF NOT EXISTS idx_users_username ON users (username);
+	CREATE TABLE IF NOT EXISTS game_stats (
+		session_id TEXT NOT NULL,
+		game_type TEXT NOT NULL,
+		points INTEGER NOT NULL DEFAULT 0,
+		wins INTEGER NOT NULL DEFAULT 0,
+		losses INTEGER NOT NULL DEFAULT 0,
+		draws INTEGER NOT NULL DEFAULT 0,
+		points_diff INTEGER NOT NULL DEFAULT 0,
+		updated_at DATETIME NOT NULL,
+		PRIMARY KEY (session_id, game_type)
+	);
 
 	CREATE TABLE IF NOT EXISTS matches (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -99,8 +109,24 @@ func (s *Service) initSchema() error {
 		created_at DATETIME NOT NULL
 	);
 	`
-	_, err := s.db.Exec(schema)
-	return err
+	if _, err := s.db.Exec(createTables); err != nil {
+		return err
+	}
+
+	// Safe migration for pre-existing tables lacking points or points_diff
+	_, _ = s.db.Exec(`ALTER TABLE users ADD COLUMN points INTEGER NOT NULL DEFAULT 0;`)
+	_, _ = s.db.Exec(`ALTER TABLE users ADD COLUMN points_diff INTEGER NOT NULL DEFAULT 0;`)
+
+	createIndexes := `
+	CREATE INDEX IF NOT EXISTS idx_users_points ON users (points DESC, points_diff DESC);
+	CREATE INDEX IF NOT EXISTS idx_users_username ON users (username);
+	CREATE INDEX IF NOT EXISTS idx_game_stats_points ON game_stats (game_type, points DESC, points_diff DESC);
+	`
+	if _, err := s.db.Exec(createIndexes); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (s *Service) preloadUsernames() error {
@@ -161,8 +187,8 @@ func (s *Service) RegisterUsername(sessionID, userJID, username string) (bool, e
 	// Direct DB upsert to guarantee persistence immediately for authentication
 	now := time.Now()
 	query := `
-	INSERT INTO users (session_id, user_jid, username, rating, wins, losses, draws, created_at, updated_at)
-	VALUES (?, ?, ?, 1000, 0, 0, 0, ?, ?)
+	INSERT INTO users (session_id, user_jid, username, points, wins, losses, draws, points_diff, created_at, updated_at)
+	VALUES (?, ?, ?, 0, 0, 0, 0, 0, ?, ?)
 	ON CONFLICT(session_id) DO UPDATE SET
 		username = excluded.username,
 		updated_at = excluded.updated_at;
@@ -184,11 +210,11 @@ func (s *Service) RegisterUsername(sessionID, userJID, username string) (bool, e
 // GetProfileBySession fetches a user profile by their bot-provided session ID.
 func (s *Service) GetProfileBySession(sessionID string) (*UserProfile, error) {
 	row := s.db.QueryRow(`
-		SELECT session_id, user_jid, username, rating, wins, losses, draws, created_at, updated_at
+		SELECT session_id, user_jid, username, points, wins, losses, draws, points_diff, created_at, updated_at
 		FROM users WHERE session_id = ?`, sessionID)
 
 	var p UserProfile
-	err := row.Scan(&p.SessionID, &p.UserJID, &p.Username, &p.Rating, &p.Wins, &p.Losses, &p.Draws, &p.CreatedAt, &p.UpdatedAt)
+	err := row.Scan(&p.SessionID, &p.UserJID, &p.Username, &p.Points, &p.Wins, &p.Losses, &p.Draws, &p.PointsDiff, &p.CreatedAt, &p.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -198,26 +224,42 @@ func (s *Service) GetProfileBySession(sessionID string) (*UserProfile, error) {
 	return &p, nil
 }
 
-// GetLeaderboard returns the top ranked players.
-func (s *Service) GetLeaderboard(limit int) ([]LeaderboardEntry, error) {
+// GetLeaderboard returns the top ranked players globally or for a specific game.
+func (s *Service) GetLeaderboard(gameType string, limit int) ([]LeaderboardEntry, error) {
 	if limit <= 0 || limit > 50 {
 		limit = 10
 	}
 
-	rows, err := s.db.Query(`
-		SELECT username, rating, wins, losses, draws
-		FROM users
-		ORDER BY rating DESC, wins DESC
-		LIMIT ?`, limit)
+	gameType = strings.ToLower(strings.TrimSpace(gameType))
+
+	var rows *sql.Rows
+	var err error
+
+	if gameType == "" || gameType == "global" || gameType == "all" {
+		rows, err = s.db.Query(`
+			SELECT username, 'global' as game_type, points, wins, losses, draws, points_diff
+			FROM users
+			ORDER BY points DESC, points_diff DESC, wins DESC
+			LIMIT ?`, limit)
+	} else {
+		rows, err = s.db.Query(`
+			SELECT u.username, s.game_type, s.points, s.wins, s.losses, s.draws, s.points_diff
+			FROM game_stats s
+			JOIN users u ON s.session_id = u.session_id
+			WHERE s.game_type = ?
+			ORDER BY s.points DESC, s.points_diff DESC, s.wins DESC
+			LIMIT ?`, gameType, limit)
+	}
+
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var list []LeaderboardEntry
+	list := make([]LeaderboardEntry, 0)
 	for rows.Next() {
 		var e LeaderboardEntry
-		if err := rows.Scan(&e.Username, &e.Rating, &e.Wins, &e.Losses, &e.Draws); err != nil {
+		if err := rows.Scan(&e.Username, &e.GameType, &e.Points, &e.Wins, &e.Losses, &e.Draws, &e.PointsDiff); err != nil {
 			return nil, err
 		}
 		list = append(list, e)
@@ -294,41 +336,86 @@ func (s *Service) persistBatch(events []InteractionEvent) error {
 	}
 	defer matchStmt.Close()
 
-	updateWinStmt, err := tx.Prepare(`
+	updateUserWinStmt, err := tx.Prepare(`
 		UPDATE users SET
-			rating = MAX(100, rating + ?),
+			points = points + ?,
+			points_diff = points_diff + ?,
 			wins = wins + 1,
 			updated_at = ?
 		WHERE session_id = ?
 	`)
 	if err != nil {
-		return fmt.Errorf("prepare win stmt: %w", err)
+		return fmt.Errorf("prepare user win stmt: %w", err)
 	}
-	defer updateWinStmt.Close()
+	defer updateUserWinStmt.Close()
 
-	updateLossStmt, err := tx.Prepare(`
+	updateUserLossStmt, err := tx.Prepare(`
 		UPDATE users SET
-			rating = MAX(100, rating + ?),
+			points = points + ?,
+			points_diff = points_diff + ?,
 			losses = losses + 1,
 			updated_at = ?
 		WHERE session_id = ?
 	`)
 	if err != nil {
-		return fmt.Errorf("prepare loss stmt: %w", err)
+		return fmt.Errorf("prepare user loss stmt: %w", err)
 	}
-	defer updateLossStmt.Close()
+	defer updateUserLossStmt.Close()
 
-	updateDrawStmt, err := tx.Prepare(`
+	updateUserDrawStmt, err := tx.Prepare(`
 		UPDATE users SET
-			rating = MAX(100, rating + ?),
+			points = points + ?,
+			points_diff = points_diff + ?,
 			draws = draws + 1,
 			updated_at = ?
 		WHERE session_id = ?
 	`)
 	if err != nil {
-		return fmt.Errorf("prepare draw stmt: %w", err)
+		return fmt.Errorf("prepare user draw stmt: %w", err)
 	}
-	defer updateDrawStmt.Close()
+	defer updateUserDrawStmt.Close()
+
+	upsertGameStatsWinStmt, err := tx.Prepare(`
+		INSERT INTO game_stats (session_id, game_type, points, wins, losses, draws, points_diff, updated_at)
+		VALUES (?, ?, ?, 1, 0, 0, ?, ?)
+		ON CONFLICT(session_id, game_type) DO UPDATE SET
+			points = points + excluded.points,
+			points_diff = points_diff + excluded.points_diff,
+			wins = wins + 1,
+			updated_at = excluded.updated_at
+	`)
+	if err != nil {
+		return fmt.Errorf("prepare game_stats win stmt: %w", err)
+	}
+	defer upsertGameStatsWinStmt.Close()
+
+	upsertGameStatsLossStmt, err := tx.Prepare(`
+		INSERT INTO game_stats (session_id, game_type, points, wins, losses, draws, points_diff, updated_at)
+		VALUES (?, ?, ?, 0, 1, 0, ?, ?)
+		ON CONFLICT(session_id, game_type) DO UPDATE SET
+			points = points + excluded.points,
+			points_diff = points_diff + excluded.points_diff,
+			losses = losses + 1,
+			updated_at = excluded.updated_at
+	`)
+	if err != nil {
+		return fmt.Errorf("prepare game_stats loss stmt: %w", err)
+	}
+	defer upsertGameStatsLossStmt.Close()
+
+	upsertGameStatsDrawStmt, err := tx.Prepare(`
+		INSERT INTO game_stats (session_id, game_type, points, wins, losses, draws, points_diff, updated_at)
+		VALUES (?, ?, ?, 0, 0, 1, ?, ?)
+		ON CONFLICT(session_id, game_type) DO UPDATE SET
+			points = points + excluded.points,
+			points_diff = points_diff + excluded.points_diff,
+			draws = draws + 1,
+			updated_at = excluded.updated_at
+	`)
+	if err != nil {
+		return fmt.Errorf("prepare game_stats draw stmt: %w", err)
+	}
+	defer upsertGameStatsDrawStmt.Close()
 
 	now := time.Now()
 	for _, evt := range events {
@@ -348,17 +435,28 @@ func (s *Service) persistBatch(events []InteractionEvent) error {
 				log.Printf("[DB] Failed to insert match: %v", err)
 			}
 
-			// Apply rating and score adjustments
+			// Apply points and points_diff adjustments
 			if evt.WinnerSession == evt.Player1Session {
-				_, _ = updateWinStmt.Exec(evt.Player1Delta, now, evt.Player1Session)
-				_, _ = updateLossStmt.Exec(evt.Player2Delta, now, evt.Player2Session)
+				// Player 1 won, Player 2 lost
+				_, _ = updateUserWinStmt.Exec(evt.Player1Points, evt.Player1PointsDiff, now, evt.Player1Session)
+				_, _ = updateUserLossStmt.Exec(evt.Player2Points, evt.Player2PointsDiff, now, evt.Player2Session)
+
+				_, _ = upsertGameStatsWinStmt.Exec(evt.Player1Session, evt.GameType, evt.Player1Points, evt.Player1PointsDiff, now)
+				_, _ = upsertGameStatsLossStmt.Exec(evt.Player2Session, evt.GameType, evt.Player2Points, evt.Player2PointsDiff, now)
 			} else if evt.WinnerSession == evt.Player2Session {
-				_, _ = updateWinStmt.Exec(evt.Player2Delta, now, evt.Player2Session)
-				_, _ = updateLossStmt.Exec(evt.Player1Delta, now, evt.Player1Session)
+				// Player 2 won, Player 1 lost
+				_, _ = updateUserWinStmt.Exec(evt.Player2Points, evt.Player2PointsDiff, now, evt.Player2Session)
+				_, _ = updateUserLossStmt.Exec(evt.Player1Points, evt.Player1PointsDiff, now, evt.Player1Session)
+
+				_, _ = upsertGameStatsWinStmt.Exec(evt.Player2Session, evt.GameType, evt.Player2Points, evt.Player2PointsDiff, now)
+				_, _ = upsertGameStatsLossStmt.Exec(evt.Player1Session, evt.GameType, evt.Player1Points, evt.Player1PointsDiff, now)
 			} else {
 				// Draw
-				_, _ = updateDrawStmt.Exec(evt.Player1Delta, now, evt.Player1Session)
-				_, _ = updateDrawStmt.Exec(evt.Player2Delta, now, evt.Player2Session)
+				_, _ = updateUserDrawStmt.Exec(evt.Player1Points, evt.Player1PointsDiff, now, evt.Player1Session)
+				_, _ = updateUserDrawStmt.Exec(evt.Player2Points, evt.Player2PointsDiff, now, evt.Player2Session)
+
+				_, _ = upsertGameStatsDrawStmt.Exec(evt.Player1Session, evt.GameType, evt.Player1Points, evt.Player1PointsDiff, now)
+				_, _ = upsertGameStatsDrawStmt.Exec(evt.Player2Session, evt.GameType, evt.Player2Points, evt.Player2PointsDiff, now)
 			}
 		}
 	}

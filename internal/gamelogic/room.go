@@ -8,11 +8,12 @@ import (
 
 // PlayerInfo stores session and display metadata for a matched player.
 type PlayerInfo struct {
-	SessionID string `json:"session_id"`
-	Username  string `json:"username"`
-	UserJID   string `json:"user_jid"`
-	Symbol    string `json:"symbol"`
-	Rating    int    `json:"rating"`
+	SessionID  string `json:"session_id"`
+	Username   string `json:"username"`
+	UserJID    string `json:"user_jid"`
+	Symbol     string `json:"symbol"`
+	Points     int    `json:"points"`
+	PointsDiff int    `json:"points_diff"`
 }
 
 // Room represents an active multiplayer match instance.
@@ -27,6 +28,7 @@ type Room struct {
 
 	TTT *TTTGame      `json:"ttt,omitempty"`
 	C4  *Connect4Game `json:"c4,omitempty"`
+	WCG *WCGGame      `json:"wcg,omitempty"`
 
 	IsBot      bool   `json:"is_bot,omitempty"`
 	BotSession string `json:"bot_session,omitempty"`
@@ -47,6 +49,9 @@ func newRoom(gameType string, p1, p2 PlayerInfo) *Room {
 	if gameType == "c4" {
 		p1Symbol = "R"
 		p2Symbol = "Y"
+	} else if gameType == "wcg" {
+		p1Symbol = "P1"
+		p2Symbol = "P2"
 	}
 	p1.Symbol = p1Symbol
 	p2.Symbol = p2Symbol
@@ -66,6 +71,8 @@ func newRoom(gameType string, p1, p2 PlayerInfo) *Room {
 		r.TTT = NewTTTGame()
 	} else if gameType == "c4" {
 		r.C4 = NewConnect4Game()
+	} else if gameType == "wcg" {
+		r.WCG = NewWCGGame()
 	}
 
 	return r

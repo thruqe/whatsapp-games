@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -154,13 +155,13 @@ func TestGameLogicAgentMatchFlow(t *testing.T) {
 	time.Sleep(600 * time.Millisecond) // wait for DB batch worker
 
 	p1Prof, err := dbSvc.GetProfileBySession("sess_p1")
-	if err != nil || p1Prof.Wins != 1 || p1Prof.Rating != 1025 {
-		t.Fatalf("expected p1 to have 1 win and 1025 rating, got %+v, err=%v", p1Prof, err)
+	if err != nil || p1Prof.Wins != 1 || p1Prof.Points != 25 || p1Prof.PointsDiff != 25 {
+		t.Fatalf("expected p1 to have 1 win, 25 points, and +25 points diff, got %+v, err=%v", p1Prof, err)
 	}
 
 	p2Prof, err := dbSvc.GetProfileBySession("sess_p2")
-	if err != nil || p2Prof.Losses != 1 || p2Prof.Rating != 985 {
-		t.Fatalf("expected p2 to have 1 loss and 985 rating, got %+v, err=%v", p2Prof, err)
+	if err != nil || p2Prof.Losses != 1 || p2Prof.Points != 0 || p2Prof.PointsDiff != -25 {
+		t.Fatalf("expected p2 to have 1 loss, 0 points, and -25 points diff, got %+v, err=%v", p2Prof, err)
 	}
 }
 
@@ -242,7 +243,7 @@ func TestBotMatchmaking(t *testing.T) {
 	agent.players["sess_human"] = &PlayerState{
 		SessionID: "sess_human",
 		Username:  "HumanPlayer",
-		Rating:    1000,
+		Points:    0,
 		Status:    "queued",
 		GameType:  "ttt",
 	}
@@ -284,4 +285,44 @@ func TestBotMatchmaking(t *testing.T) {
 		t.Fatalf("expected bot to have executed its move, moveCount=%d", room.TTT.MoveCount)
 	}
 }
+
+func TestWCGGame(t *testing.T) {
+	wcg := NewWCGGame()
+	wcg.RequiredLetter = "A"
+
+	// P1 plays "apple" (valid, starts with 'A')
+	pts, winner, err := wcg.SubmitWord("apple", "P1", "Alice")
+	if err != nil || pts <= 0 || winner != "" {
+		t.Fatalf("expected valid submission for apple: pts=%d, winner=%s, err=%v", pts, winner, err)
+	}
+
+	// Last letter of "apple" is 'e', so required letter must be 'E'
+	if wcg.RequiredLetter != "E" {
+		t.Fatalf("expected required letter to be 'E', got %s", wcg.RequiredLetter)
+	}
+
+	// P2 plays "elephant" (valid, starts with 'E')
+	pts2, winner2, err2 := wcg.SubmitWord("elephant", "P2", "Bob")
+	if err2 != nil || pts2 <= 0 || winner2 != "" {
+		t.Fatalf("expected valid submission for elephant: pts=%d, winner=%s, err=%v", pts2, winner2, err2)
+	}
+
+	// Last letter of "elephant" is 't', so required letter must be 'T'
+	if wcg.RequiredLetter != "T" {
+		t.Fatalf("expected required letter to be 'T', got %s", wcg.RequiredLetter)
+	}
+
+	// P1 tries to play a word that does not start with 'T' -> strike 1
+	_, _, errInvalidStart := wcg.SubmitWord("banana", "P1", "Alice")
+	if errInvalidStart == nil || wcg.P1Strikes != 1 {
+		t.Fatalf("expected error and strike for invalid start letter: %v, strikes=%d", errInvalidStart, wcg.P1Strikes)
+	}
+
+	// Bot solver test: pick word starting with 'T'
+	botWord := SelectWCGMove("T", wcg.UsedWords)
+	if botWord == "" || strings.ToUpper(string(botWord[0])) != "T" {
+		t.Fatalf("expected bot to find word starting with T, got %s", botWord)
+	}
+}
+
 

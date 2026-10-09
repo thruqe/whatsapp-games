@@ -63,7 +63,8 @@ func main() {
 
 	// REST API Routes
 	mux.HandleFunc("/api/leaderboard", func(w http.ResponseWriter, r *http.Request) {
-		entries, err := dbSvc.GetLeaderboard(25)
+		gameType := r.URL.Query().Get("game")
+		entries, err := dbSvc.GetLeaderboard(gameType, 25)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("failed to get leaderboard: %v", err), http.StatusInternalServerError)
 			return

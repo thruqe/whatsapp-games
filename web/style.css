@@ -958,6 +958,202 @@ h2 {
   color: var(--accent-emerald);
 }
 
+.lb-tabs {
+  display: flex;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 4px;
+  border-radius: 8px;
+  margin-bottom: 12px;
+  border: 1px solid var(--surface-border);
+}
+
+.lb-tab {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 6px 4px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: center;
+}
+
+.lb-tab:hover {
+  color: #fff;
+}
+
+.lb-tab.active {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.lb-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.lb-points-diff {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+}
+.lb-points-diff.positive { color: var(--accent-emerald); }
+.lb-points-diff.negative { color: var(--accent-danger); }
+.lb-points-diff.neutral { color: var(--text-tertiary); }
+
+/* Word Chain Game (WCG) Board */
+.board-wcg {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 360px;
+  gap: 12px;
+}
+
+.wcg-control-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+  padding: 10px 14px;
+}
+
+.wcg-req-box {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.wcg-box-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--text-secondary);
+  font-weight: 700;
+}
+
+.wcg-req-char {
+  font-family: var(--font-mono);
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--accent-cyan);
+  line-height: 1;
+}
+
+.wcg-stats-box {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.wcg-score-line {
+  display: flex;
+  gap: 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.wcg-chain-stream {
+  min-height: 180px;
+  max-height: 240px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+}
+
+.wcg-empty-hint {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  text-align: center;
+  margin: auto;
+  padding: 20px 10px;
+}
+
+.wcg-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--surface-border);
+  animation: slideInWord 0.25s var(--ease-spring) forwards;
+}
+
+@keyframes slideInWord {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.wcg-chip.you {
+  border-left: 3px solid var(--accent-emerald);
+}
+
+.wcg-chip.opp {
+  border-left: 3px solid #ff9800;
+}
+
+.wcg-chip-word {
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 0.05em;
+}
+
+.wcg-chip-author {
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+.wcg-form {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.wcg-input-group {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+.wcg-input {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.wcg-input:focus {
+  border-color: var(--surface-border-bright);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
 /* Accessibility: Reduced Motion Support */
 @media (prefers-reduced-motion: reduce) {
   * {
