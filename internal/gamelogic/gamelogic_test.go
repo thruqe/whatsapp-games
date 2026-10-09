@@ -163,3 +163,125 @@ func TestGameLogicAgentMatchFlow(t *testing.T) {
 		t.Fatalf("expected p2 to have 1 loss and 985 rating, got %+v, err=%v", p2Prof, err)
 	}
 }
+
+func TestBotEngineAndNames(t *testing.T) {
+	// Test bot names are unique and generated with esoteric patterns
+	names := make(map[string]bool)
+	for i := 0; i < 20; i++ {
+		name := GenerateUniqueBotName()
+		if name == "" {
+			t.Fatalf("expected non-empty bot name")
+		}
+		if names[name] {
+			t.Fatalf("duplicate bot name generated: %s", name)
+		}
+		names[name] = true
+	}
+
+	// Test TTT Bot winning move detection
+	// Board: O at 0, 1 -> Bot O must play 2 to win!
+	var tttBoard [9]string
+	tttBoard[0] = "O"
+	tttBoard[1] = "O"
+	move := SelectTTTMove(tttBoard, "O", "X")
+	if move != 2 {
+		t.Fatalf("expected bot to choose winning move 2, got %d", move)
+	}
+
+	// Test TTT Bot blocking move detection
+	// Board: X at 3, 4 -> Bot O must block at 5!
+	var tttBlock [9]string
+	tttBlock[3] = "X"
+	tttBlock[4] = "X"
+	blockMove := SelectTTTMove(tttBlock, "O", "X")
+	if blockMove != 5 {
+		t.Fatalf("expected bot to block at 5, got %d", blockMove)
+	}
+
+	// Test C4 Bot winning drop detection
+	// Board: 3 Red pieces in col 3 -> Bot R must drop into col 3 to win!
+	var c4Board [C4Rows][C4Cols]string
+	c4Board[5][3] = "R"
+	c4Board[4][3] = "R"
+	c4Board[3][3] = "R"
+	c4Move := SelectC4Move(c4Board, "R", "Y")
+	if c4Move != 3 {
+		t.Fatalf("expected bot to choose winning column 3, got %d", c4Move)
+	}
+
+	// Test C4 Bot blocking drop detection
+	// Board: 3 Yellow pieces in col 1 -> Bot R must drop into col 1 to block!
+	var c4Block [C4Rows][C4Cols]string
+	c4Block[5][1] = "Y"
+	c4Block[4][1] = "Y"
+	c4Block[3][1] = "Y"
+	c4BlockMove := SelectC4Move(c4Block, "R", "Y")
+	if c4BlockMove != 1 {
+		t.Fatalf("expected bot to block in column 1, got %d", c4BlockMove)
+	}
+}
+
+func TestBotMatchmaking(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "bot_test.db")
+
+	dbSvc, err := db.NewService(dbPath, 100)
+	if err != nil {
+		t.Fatalf("failed to init db: %v", err)
+	}
+	defer dbSvc.Close()
+
+	connMgr := connmanager.NewManager(nil)
+	agent := NewAgent(connMgr, dbSvc)
+
+	ctx := context.Background()
+	_, _ = dbSvc.RegisterUsername("sess_human", "human@s.whatsapp.net", "HumanPlayer")
+
+	// Trigger bot match directly
+	agent.playersMu.Lock()
+	agent.players["sess_human"] = &PlayerState{
+		SessionID: "sess_human",
+		Username:  "HumanPlayer",
+		Rating:    1000,
+		Status:    "queued",
+		GameType:  "ttt",
+	}
+	agent.queues["ttt"] = []string{"sess_human"}
+	agent.playersMu.Unlock()
+
+	agent.triggerBotMatch("sess_human", "ttt")
+
+	time.Sleep(50 * time.Millisecond)
+
+	agent.roomsMu.RLock()
+	roomID, inRoom := agent.sessionRoom["sess_human"]
+	room := agent.rooms[roomID]
+	agent.roomsMu.RUnlock()
+
+	if !inRoom || room == nil {
+		t.Fatalf("expected human to be matched into a room")
+	}
+
+	if !room.IsBot {
+		t.Fatalf("expected room.IsBot to be true")
+	}
+
+	if room.Player2.Username == "" || room.Player2.Username == "HumanPlayer" {
+		t.Fatalf("expected unique bot opponent, got %s", room.Player2.Username)
+	}
+
+	// Test human makes move 0, bot should respond with its move
+	agent.HandleInboundMessage(ctx, connmanager.InboundMessage{
+		SessionID: "sess_human",
+		Action:    "make_move",
+		Payload:   json.RawMessage(`{"pos":0}`),
+	})
+
+	// Wait for bot's reaction delay + execution
+	time.Sleep(1600 * time.Millisecond)
+
+	if room.TTT.MoveCount < 2 {
+		t.Fatalf("expected bot to have executed its move, moveCount=%d", room.TTT.MoveCount)
+	}
+}
+

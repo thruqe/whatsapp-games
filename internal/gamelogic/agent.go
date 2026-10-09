@@ -2,9 +2,11 @@ package gamelogic
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/big"
 	"strings"
 	"sync"
 	"time"
@@ -31,8 +33,9 @@ type Agent struct {
 	playersMu sync.RWMutex
 	players   map[string]*PlayerState // sessionID -> PlayerState
 
-	queueMu sync.Mutex
-	queues  map[string][]string // gameType -> []sessionID
+	queueMu     sync.Mutex
+	queues      map[string][]string // gameType -> []sessionID
+	queueTimers map[string]*time.Timer
 
 	roomsMu     sync.RWMutex
 	rooms       map[string]*Room   // roomID -> Room
@@ -46,6 +49,7 @@ func NewAgent(connMgr *connmanager.Manager, dbSvc *db.Service) *Agent {
 		dbSvc:       dbSvc,
 		players:     make(map[string]*PlayerState),
 		queues:      make(map[string][]string),
+		queueTimers: make(map[string]*time.Timer),
 		rooms:       make(map[string]*Room),
 		sessionRoom: make(map[string]string),
 	}
@@ -199,33 +203,99 @@ func (a *Agent) handleFindMatch(sessionID string, payload json.RawMessage) {
 		}
 	}
 
-	// Add to queue
-	q = append(q, sessionID)
+	// If an opponent is already waiting in queue, match immediately!
+	if len(q) > 0 {
+		p1Session := q[0]
+		a.queues[gameType] = q[1:]
+
+		// Cancel p1's 25-second bot timer
+		if timer, ok := a.queueTimers[p1Session]; ok {
+			timer.Stop()
+			delete(a.queueTimers, p1Session)
+		}
+
+		p.Status = "in_game"
+		p.GameType = gameType
+
+		go a.startMatch(gameType, p1Session, sessionID)
+		return
+	}
+
+	// No opponent waiting yet: add to queue and start 25-second bot timer
+	a.queues[gameType] = append(q, sessionID)
 	p.Status = "queued"
 	p.GameType = gameType
+
+	a.queueTimers[sessionID] = time.AfterFunc(25*time.Second, func() {
+		a.triggerBotMatch(sessionID, gameType)
+	})
 
 	_ = a.connMgr.SendToSession(sessionID, connmanager.OutboundMessage{
 		Type: "matchmaking_status",
 		Payload: map[string]any{
 			"status":    "searching",
 			"game_type": gameType,
+			"timeout":   25,
 		},
 	})
+}
 
-	if len(q) >= 2 {
-		p1Session := q[0]
-		p2Session := q[1]
-		a.queues[gameType] = q[2:]
-
-		go a.startMatch(gameType, p1Session, p2Session)
-	} else {
-		a.queues[gameType] = q
+func (a *Agent) triggerBotMatch(humanSession, gameType string) {
+	a.queueMu.Lock()
+	if timer, ok := a.queueTimers[humanSession]; ok {
+		timer.Stop()
+		delete(a.queueTimers, humanSession)
 	}
+
+	inQueue := false
+	q := a.queues[gameType]
+	for i, sid := range q {
+		if sid == humanSession {
+			a.queues[gameType] = append(q[:i], q[i+1:]...)
+			inQueue = true
+			break
+		}
+	}
+	a.queueMu.Unlock()
+
+	if !inQueue {
+		return
+	}
+
+	a.playersMu.RLock()
+	p, exists := a.players[humanSession]
+	a.playersMu.RUnlock()
+	if !exists || p.Status != "queued" {
+		return
+	}
+
+	botName := GenerateUniqueBotName()
+	rVal, _ := rand.Int(rand.Reader, big.NewInt(0xFFFF))
+	botSession := fmt.Sprintf("bot_%04x", rVal.Int64())
+	botRating := 960 + randInt(180)
+
+	a.playersMu.Lock()
+	a.players[botSession] = &PlayerState{
+		SessionID: botSession,
+		Username:  botName,
+		Rating:    botRating,
+		Status:    "in_game",
+		GameType:  gameType,
+	}
+	a.playersMu.Unlock()
+
+	log.Printf("[GameLogic] Matchmaking 25s expired for %s. Matching with automated bot %s (Rating: %d)",
+		humanSession, botName, botRating)
+
+	go a.startMatch(gameType, humanSession, botSession)
 }
 
 func (a *Agent) handleCancelMatch(sessionID string) {
 	a.queueMu.Lock()
-	defer a.queueMu.Unlock()
+	if timer, ok := a.queueTimers[sessionID]; ok {
+		timer.Stop()
+		delete(a.queueTimers, sessionID)
+	}
 
 	for gt, q := range a.queues {
 		for i, sid := range q {
@@ -235,6 +305,7 @@ func (a *Agent) handleCancelMatch(sessionID string) {
 			}
 		}
 	}
+	a.queueMu.Unlock()
 
 	a.playersMu.Lock()
 	if p, ok := a.players[sessionID]; ok && p.Status == "queued" {
@@ -268,6 +339,10 @@ func (a *Agent) startMatch(gameType, p1Session, p2Session string) {
 	}
 
 	room := newRoom(gameType, p1Info, p2Info)
+	if strings.HasPrefix(p2Session, "bot_") {
+		room.IsBot = true
+		room.BotSession = p2Session
+	}
 
 	a.roomsMu.Lock()
 	a.rooms[room.ID] = room
@@ -278,8 +353,8 @@ func (a *Agent) startMatch(gameType, p1Session, p2Session string) {
 	p1State.Status = "in_game"
 	p2State.Status = "in_game"
 
-	log.Printf("[GameLogic] Match started: room=%s game=%s %s vs %s",
-		room.ID, gameType, p1Info.Username, p2Info.Username)
+	log.Printf("[GameLogic] Match started: room=%s game=%s %s vs %s (isBot: %v)",
+		room.ID, gameType, p1Info.Username, p2Info.Username, room.IsBot)
 
 	// Notify player 1
 	_ = a.connMgr.SendToSession(p1Session, connmanager.OutboundMessage{
@@ -295,19 +370,23 @@ func (a *Agent) startMatch(gameType, p1Session, p2Session string) {
 		},
 	})
 
-	// Notify player 2
-	_ = a.connMgr.SendToSession(p2Session, connmanager.OutboundMessage{
-		Type: "match_start",
-		Payload: map[string]any{
-			"room_id":     room.ID,
-			"game_type":   gameType,
-			"you":         room.Player2,
-			"opponent":    room.Player1,
-			"your_turn":   room.TurnSession == p2Session,
-			"turn_symbol": room.TurnSymbol,
-			"board":       a.getGameBoard(room),
-		},
-	})
+	if !room.IsBot {
+		// Notify player 2
+		_ = a.connMgr.SendToSession(p2Session, connmanager.OutboundMessage{
+			Type: "match_start",
+			Payload: map[string]any{
+				"room_id":     room.ID,
+				"game_type":   gameType,
+				"you":         room.Player2,
+				"opponent":    room.Player1,
+				"your_turn":   room.TurnSession == p2Session,
+				"turn_symbol": room.TurnSymbol,
+				"board":       a.getGameBoard(room),
+			},
+		})
+	} else if room.TurnSession == room.BotSession {
+		go a.scheduleBotMove(room.ID)
+	}
 }
 
 func (a *Agent) getGameBoard(room *Room) any {
@@ -400,14 +479,18 @@ func (a *Agent) handleMakeMove(sessionID string, payload json.RawMessage) {
 		},
 	})
 
-	_ = a.connMgr.SendToSession(room.Player2.SessionID, connmanager.OutboundMessage{
-		Type: "move_update",
-		Payload: map[string]any{
-			"board":       board,
-			"your_turn":   room.TurnSession == room.Player2.SessionID,
-			"turn_symbol": room.TurnSymbol,
-		},
-	})
+	if !room.IsBot {
+		_ = a.connMgr.SendToSession(room.Player2.SessionID, connmanager.OutboundMessage{
+			Type: "move_update",
+			Payload: map[string]any{
+				"board":       board,
+				"your_turn":   room.TurnSession == room.Player2.SessionID,
+				"turn_symbol": room.TurnSymbol,
+			},
+		})
+	} else if room.TurnSession == room.BotSession {
+		go a.scheduleBotMove(room.ID)
+	}
 }
 
 func (a *Agent) finishMatch(room *Room, winnerSymbol string) {
@@ -545,3 +628,79 @@ func (a *Agent) handleClientLeave(sessionID, reason string) {
 	}
 	a.finishMatch(room, winnerSymbol)
 }
+
+func (a *Agent) scheduleBotMove(roomID string) {
+	// Realistic reaction delay between 700ms and 1400ms
+	delay := 700 + randInt(700)
+	time.Sleep(time.Duration(delay) * time.Millisecond)
+
+	a.roomsMu.RLock()
+	room, exists := a.rooms[roomID]
+	a.roomsMu.RUnlock()
+
+	if !exists || room == nil || room.Status != "active" || !room.IsBot {
+		return
+	}
+	if room.TurnSession != room.BotSession {
+		return
+	}
+
+	botSymbol := room.Player2.Symbol
+	humanSymbol := room.Player1.Symbol
+
+	var moveResult string
+	var err error
+
+	if room.GameType == "ttt" && room.TTT != nil {
+		pos := SelectTTTMove(room.TTT.Board, botSymbol, humanSymbol)
+		if pos >= 0 {
+			err = room.TTT.MakeMove(pos, botSymbol)
+			if err == nil {
+				moveResult = room.TTT.CheckWinner()
+			}
+		}
+	} else if room.GameType == "c4" && room.C4 != nil {
+		col := SelectC4Move(room.C4.Board, botSymbol, humanSymbol)
+		if col >= 0 {
+			_, err = room.C4.DropPiece(col, botSymbol)
+			if err == nil {
+				moveResult = room.C4.CheckWinner()
+			}
+		}
+	}
+
+	if err != nil {
+		log.Printf("[GameLogic] Bot move error in room %s: %v", room.ID, err)
+		return
+	}
+
+	if moveResult != "" {
+		a.finishMatch(room, moveResult)
+		return
+	}
+
+	// Switch turn back to human player
+	room.SwitchTurn()
+	board := a.getGameBoard(room)
+
+	_ = a.connMgr.SendToSession(room.Player1.SessionID, connmanager.OutboundMessage{
+		Type: "move_update",
+		Payload: map[string]any{
+			"board":       board,
+			"your_turn":   room.TurnSession == room.Player1.SessionID,
+			"turn_symbol": room.TurnSymbol,
+		},
+	})
+}
+
+func randInt(n int) int {
+	if n <= 0 {
+		return 0
+	}
+	b, _ := rand.Int(rand.Reader, big.NewInt(int64(n)))
+	if b == nil {
+		return int(time.Now().UnixNano() % int64(n))
+	}
+	return int(b.Int64())
+}
+

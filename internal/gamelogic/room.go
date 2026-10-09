@@ -28,6 +28,9 @@ type Room struct {
 	TTT *TTTGame      `json:"ttt,omitempty"`
 	C4  *Connect4Game `json:"c4,omitempty"`
 
+	IsBot      bool   `json:"is_bot,omitempty"`
+	BotSession string `json:"bot_session,omitempty"`
+
 	WinnerSession string    `json:"winner_session,omitempty"`
 	WinnerName    string    `json:"winner_name,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`

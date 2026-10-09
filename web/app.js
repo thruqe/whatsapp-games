@@ -166,13 +166,16 @@
         if (msg.payload.status === 'searching') {
           queueStatus.style.display = 'flex';
           btnFindMatch.style.display = 'none';
+          startQueueCountdown();
         } else {
+          stopQueueCountdown();
           queueStatus.style.display = 'none';
           btnFindMatch.style.display = 'inline-flex';
         }
         break;
 
       case 'match_start':
+        stopQueueCountdown();
         queueStatus.style.display = 'none';
         btnFindMatch.style.display = 'inline-flex';
         onMatchStart(msg.payload);
@@ -227,12 +230,41 @@
     cardTTT.classList.remove('active');
   });
 
-  // Matchmaking Buttons
+  // Matchmaking Buttons & 25s Countdown
+  let queueTimerInterval = null;
+  let queueSeconds = 0;
+
+  function startQueueCountdown() {
+    stopQueueCountdown();
+    queueSeconds = 0;
+    const timerEl = document.getElementById('queueTimerText');
+    if (timerEl) timerEl.textContent = 'Searching for player (0s / 25s)';
+    queueTimerInterval = setInterval(() => {
+      queueSeconds++;
+      if (timerEl) {
+        if (queueSeconds < 25) {
+          timerEl.textContent = `Searching for player (${queueSeconds}s / 25s)`;
+        } else {
+          timerEl.textContent = 'Auto-matching with automated bot...';
+        }
+      }
+    }, 1000);
+  }
+
+  function stopQueueCountdown() {
+    if (queueTimerInterval) {
+      clearInterval(queueTimerInterval);
+      queueTimerInterval = null;
+    }
+    queueSeconds = 0;
+  }
+
   btnFindMatch.addEventListener('click', () => {
     sendAction('find_match', { game_type: selectedGame });
   });
 
   btnCancelQueue.addEventListener('click', () => {
+    stopQueueCountdown();
     sendAction('cancel_match', {});
   });
 
