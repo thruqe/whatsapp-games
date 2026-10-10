@@ -42,7 +42,7 @@ type Agent struct {
 	queueTimers map[string]*time.Timer
 
 	roomsMu     sync.RWMutex
-	rooms       map[string]*Room   // roomID -> Room
+	rooms       map[string]*Room  // roomID -> Room
 	sessionRoom map[string]string // sessionID -> roomID
 }
 
@@ -810,4 +810,3 @@ func randInt(n int) int {
 	}
 	return int(b.Int64())
 }
-

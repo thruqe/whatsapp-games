@@ -1,6 +1,7 @@
 package gamelogic
 
 import (
+	"context"
 	"crypto/rand"
 	"fmt"
 	"math/big"
@@ -149,15 +150,27 @@ func (g *WCGGame) checkStrikeWinner() string {
 // SelectWCGMove picks a valid unused word starting with the required letter for the automated bot.
 func SelectWCGMove(reqLetter string, usedWords map[string]bool) string {
 	reqLetter = strings.ToLower(reqLetter)
-	candidates, ok := dictionaryByLetter[reqLetter]
-	if !ok || len(candidates) == 0 {
+	var candidates []string
+	if list, ok := dictionaryByLetter[reqLetter]; ok {
+		candidates = append(candidates, list...)
+	}
+	for _, w := range extendedCommonWords {
+		if strings.HasPrefix(strings.ToLower(w), reqLetter) {
+			candidates = append(candidates, w)
+		}
+	}
+
+	if len(candidates) == 0 {
 		return ""
 	}
 
 	var valid []string
+	seen := make(map[string]bool)
 	for _, w := range candidates {
-		if !usedWords[w] {
-			valid = append(valid, w)
+		lw := strings.ToLower(w)
+		if !usedWords[lw] && !seen[lw] {
+			seen[lw] = true
+			valid = append(valid, lw)
 		}
 	}
 
@@ -169,20 +182,10 @@ func SelectWCGMove(reqLetter string, usedWords map[string]bool) string {
 	return valid[idx.Int64()]
 }
 
-// IsValidEnglishWord checks if a word exists in the dictionary.
+// IsValidEnglishWord checks if a word exists and is an authentic English word
+// using the multi-tier WordValidator (in-memory cache, embedded dictionary, and live dictionary APIs).
 func IsValidEnglishWord(word string) bool {
-	word = strings.ToLower(strings.TrimSpace(word))
-	firstChar := string(word[0])
-	bucket, ok := dictionaryByLetter[firstChar]
-	if !ok {
-		return false
-	}
-	for _, w := range bucket {
-		if w == word {
-			return true
-		}
-	}
-	return false
+	return GetDefaultValidator().ValidateWord(context.Background(), word)
 }
 
 // Extensive dictionary partitioned by starting letter for instant lookups

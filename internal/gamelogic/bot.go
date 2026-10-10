@@ -8,8 +8,8 @@ import (
 )
 
 var (
-	botNameMu  sync.Mutex
-	usedNames  = make(map[string]bool)
+	botNameMu sync.Mutex
+	usedNames = make(map[string]bool)
 
 	esotericPrefixes = []string{
 		"Quantum", "Xenon", "Axiom", "Entropy", "Neuro",

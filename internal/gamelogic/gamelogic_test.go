@@ -324,5 +324,3 @@ func TestWCGGame(t *testing.T) {
 		t.Fatalf("expected bot to find word starting with T, got %s", botWord)
 	}
 }
-
-

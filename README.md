@@ -1,14 +1,87 @@
-# WhatsApp Webview Games Server
+# WhatsApp Webview Games
 
 A real-time multiplayer gaming backend designed specifically for **WhatsApp In-App Webviews**.
 
-Users launch games directly from WhatsApp via the bot command `.games`. The bot issues an authenticated session ID, and users tap the in-app webview link to enter matchmaking, register a unique gamer tag, play live against another player, and climb the global rankings.
+Users launch games directly from WhatsApp via the bot command `.games`. The bot issues an authenticated session ID, and users tap the in-app webview link to enter matchmaking, register a unique gamer tag, play live against another player (or intelligent fallback bots), and climb the global rankings.
 
----
+## Usage
 
-## 🏛️ Architecture Overview
+Configuration is managed through environment variables or CLI flags; supported settings include:
 
-The system is split into three decoupled services/agents following a strict separation of concerns:
+| Environment Variable | CLI Flag    | Default    | Description                                             |
+| :------------------- | :---------- | :--------- | :------------------------------------------------------ |
+| `PORT`               | `--port`    | `8088`     | HTTP and WebSocket port to listen on                    |
+| `DB_PATH`            | `--db`      | `games.db` | SQLite database file path                               |
+| `TUNNEL`             | `--tunnel`  | `false`    | Automatically launch `cloudflared` quick HTTPS tunnel   |
+
+### Running the Server
+
+Using the [Taskfile](./Taskfile.yml):
+
+```bash
+# Compile and run locally
+task build
+./bin/server
+
+# Or run with cloudflared public HTTPS tunnel enabled
+./bin/server --tunnel
+```
+
+The server starts a `cloudflared` quick tunnel and prints:
+```
+🌐 Public Webview HTTPS URL: https://example-subdomain.trycloudflare.com
+👉 Set WHATSAPP_GAMES_URL=https://example-subdomain.trycloudflare.com in whatsapp-go
+```
+
+### Docker
+
+Build and run using Docker:
+
+```bash
+# Build production image
+task docker:build
+
+# Run container exposing port 8088
+task docker:run
+```
+
+Or using standard Docker CLI:
+
+```bash
+docker build -t thruqe/whatsapp-games:latest .
+docker run -it --rm -p 8088:8088 -v $(pwd)/games.db:/app/bin/games.db thruqe/whatsapp-games:latest
+```
+
+## Features
+
+- **Multi-Game Real-Time Engine**:
+  - **Tic-Tac-Toe (`ttt`)**: 3x3 grid, turn alternation, winning/draw detection.
+  - **Connect 4 (`c4`)**: 7x6 gravity board, horizontal, vertical, and diagonal win detection.
+  - **Word Chain Game (`wcg`)**: Fast-paced English vocabulary chain with multi-tier live word reality validation.
+- **WCG Multi-API Reality Validation Engine**:
+  - Validates word reality against multiple authoritative online dictionary APIs in parallel:
+    - **Datamuse API** (`api.datamuse.com`)
+    - **Wikimedia / Wiktionary Action Query API** (`en.wiktionary.org/w/api.php`)
+    - **Wikimedia / Wiktionary REST Definition API** (`en.wiktionary.org/api/rest_v1`)
+    - **Free Dictionary API** (`api.dictionaryapi.dev`)
+  - Instant O(1) in-memory cache and embedded core dictionary for sub-millisecond local responses.
+  - Automatic fallback resilience in offline or high-latency scenarios.
+- **Intelligent Bot Opponents**:
+  - Instant fallback matchmaker when waiting queues exceed 25 seconds.
+  - Procedural esoteric gamer tag generator (`Abyssal_Valkyrie::Null`, `Celestial_Drifter.ai`, etc.).
+  - Strategic bot heuristics for Tic-Tac-Toe, Connect 4, and extensive Word Chain vocabularies.
+- **Connection Manager**:
+  - Thread-safe WebSocket registry identified exclusively by bot-issued cryptographic session IDs.
+  - Heartbeat detection and auto-forfeit handling on client drops.
+- **Asynchronous Batch Persistence**:
+  - Non-blocking SQLite persistence via buffered interaction channels (`chan InteractionEvent`).
+  - Flush batching every 500ms or 25 events to eliminate database I/O bottlenecks.
+- **Cloudflared Quick Tunnel Integration**:
+  - One-flag public HTTPS provisioning (`--tunnel`) required for native WhatsApp mobile webviews.
+
+## Architecture Overview
+
+The system is decoupled into dedicated agents following a strict separation of concerns:
 
 ```
 +-------------------------------------------------------------------------+
@@ -28,10 +101,12 @@ The system is split into three decoupled services/agents following a strict sepa
                                      v
 +-------------------------------------------------------------------------+
 |                         Game Logic Agent                                |
-|  - Matchmaking Queue (Tic-Tac-Toe, Connect 4)                           |
+|  - Matchmaking Queues (Tic-Tac-Toe, Connect 4, Word Chain)              |
+|  - Multi-API Word Validator (Datamuse, Wiktionary, Free Dictionary)     |
 |  - State machines, turn validation, win/loss/draw detection             |
 |  - Broadcasts live board transitions to matched players                 |
-|  - Calculates ELO rating adjustments (+25 Win / -15 Loss / +5 Draw)     |
+|  - Automated intelligent bot engines & procedural names                 |
+|  - Calculates rating adjustments (+25 Win / -15 Loss / +5 Draw)         |
 +------------------------------------+------------------------------------+
                                      |
                                      | Buffered Channel (chan InteractionEvent)
@@ -42,78 +117,40 @@ The system is split into three decoupled services/agents following a strict sepa
 |  - Asynchronous Batch Worker flushes events in SQLite transactions      |
 |  - Enforces UNIQUE constraint on player usernames                       |
 |  - Tracks persistent ratings, stats, and match histories                |
-+-------------------------------------------------------------------------+
++------------------------------------+------------------------------------+
 ```
 
----
-
-## 🎯 The Three Core Agents
-
-### 1. Connection Manager Agent (`internal/connmanager`)
-- **Session Identification:** Validates and keys every connection strictly by the bot-issued `session_id`.
-- **Concurrency & Routing:** Thread-safe registry mapping `sessionID -> *Client` with independent write pumps.
-- **Bi-directional Routing:**
-  - Forwards incoming JSON actions from clients to the Game Logic Agent.
-  - Exposes `SendToSession(sessionID, msg)` and `BroadcastToSessions(sessionIDs, msg)` for outgoing state updates.
-- **Heartbeat & Disconnects:** Detects socket drops and notifies Game Logic Agent to resolve active match forfeits.
-
-### 2. Game Logic Agent (`internal/gamelogic`)
-- **Username Registration:** Validates that users register a unique username before entering matchmaking.
-- **Matchmaking Engine:** Matches pairs of players waiting in queue for a selected game type (`ttt` or `c4`).
-- **Game Engines:**
-  - **Tic-Tac-Toe (`ttt`):** 3x3 grid, turn alternation (X and O), 3-in-a-row win & draw detection.
-  - **Connect 4 (`c4`):** 7x6 grid, gravity column drop mechanics, 4-in-a-row (horizontal, vertical, diagonal) win detection.
-- **State Broadcasts:** Sends live board transitions, turn indicators, and timers to both player sessions.
-- **Event Dispatching:** Sends completion events with score/rating deltas into the Database Service buffered channel.
-
-### 3. Database Service (`internal/db`)
-- **Asynchronous Batch Worker:** Dedicated background goroutine consuming from a buffered channel (`chan InteractionEvent`, capacity: 1024).
-- **Batched Persistence:** Groups multiple game results into SQLite transactions every 500ms or 25 events, preventing I/O bottlenecks.
-- **Schema:**
-  - `users`: `session_id`, `user_jid`, `username` (UNIQUE), `rating` (default 1000), `wins`, `losses`, `draws`.
-  - `matches`: `game_type`, `player1_session`, `player2_session`, `player1_name`, `player2_name`, `winner_session`, `moves_count`.
-- **Global Leaderboard:** Computes top players by ELO rating and win record.
-
----
-
-## 🚀 Running the Server
-
-### Standalone Local Server
-```bash
-go run ./cmd/server
-# Server listens on http://localhost:8088
-```
-
-### With Cloudflared Public HTTPS Tunnel (For WhatsApp Webview)
-WhatsApp mobile clients require a valid public HTTPS endpoint to open in-app webviews. You can start the server with the `--tunnel` flag:
-```bash
-./bin/server --tunnel
-```
-The server will start a `cloudflared` quick tunnel and print:
-```
-🌐 Public Webview HTTPS URL: https://example-subdomain.trycloudflare.com
-👉 Set WHATSAPP_GAMES_URL=https://example-subdomain.trycloudflare.com in whatsapp-go
-```
-
----
-
-## 🤖 WhatsApp Bot Integration
+## WhatsApp Bot Integration
 
 In `whatsapp-go`, the bot provides the unified command:
+
 ```
 .games
 .games ttt
 .games c4
+.games wcg
 .games lb
 ```
-The bot creates a cryptographically random session ID for the user and replies with a one-tap in-app webview link:
-`https://<server-domain>/?session=gsess_<token>&user=<user_jid>&game=ttt`
 
----
+The bot issues a cryptographic session token and returns a one-tap in-app webview link:
+`https://<server-domain>/?session=gsess_<token>&user=<user_jid>&game=wcg`
 
-## 🧪 Testing
+## Contributions
 
-Run all unit tests across all agents:
-```bash
-go test -v ./...
-```
+If you want to help make this project better, please take the time to read the [Contributing Guidelines](./docs/CONTRIBUTING.md) and open a pull request with your changes.
+
+If you are using any AI agent for assistance, please refer to the [AGENTS Documentation](./docs/AGENTS.md) guide.
+
+## Acknowledgements
+
+whatsapp-games is inspired and powered by the broader Go, WhatsApp, and gaming ecosystems, with dictionary validation backed by Datamuse, Wikimedia Wiktionary, and the open-source dictionary community.
+
+## Licensing
+
+This project is open source; see the [LICENSE](./LICENSE) file for full details.
+
+## Support this project
+
+If you found this project to be useful in any way, please consider sending a tip:
+
+<a href="https://etherscan.io/address/0x76a5307e573401f2b7189fb721a33dc483e985a8"><img src="https://cdn-icons-png.flaticon.com/128/15301/15301597.png" width="24" height="24" alt="Donate ETH" /></a> `0x76a5307e573401f2b7189fb721a33dc483e985a8`
