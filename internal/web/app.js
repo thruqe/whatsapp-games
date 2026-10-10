@@ -326,13 +326,16 @@
     isMyTurn = payload.your_turn;
     mySymbol = payload.you.symbol;
 
-    if (youSymbol) youSymbol.textContent = payload.you.symbol;
-    if (youName) youName.textContent = `@${payload.you.username}`;
-    if (youPoints) youPoints.textContent = formatPlayerRating(payload.you.points || 0, payload.you.points_diff || 0);
+    const yourUsername = payload.you?.username || currentUser.username || 'You';
+    const oppUsername = payload.opponent?.username || (currentRoom?.opponent?.username || 'Opponent');
 
-    if (oppSymbol) oppSymbol.textContent = payload.opponent.symbol;
-    if (oppName) oppName.textContent = `@${payload.opponent.username}`;
-    if (oppPoints) oppPoints.textContent = formatPlayerRating(payload.opponent.points || 0, payload.opponent.points_diff || 0);
+    if (youSymbol) youSymbol.textContent = payload.you?.symbol || 'X';
+    if (youName) youName.textContent = `@${yourUsername}`;
+    if (youPoints) youPoints.textContent = formatPlayerRating(payload.you?.points || 0, payload.you?.points_diff || 0);
+
+    if (oppSymbol) oppSymbol.textContent = payload.opponent?.symbol || 'O';
+    if (oppName) oppName.textContent = `@${oppUsername}`;
+    if (oppPoints) oppPoints.textContent = formatPlayerRating(payload.opponent?.points || 0, payload.opponent?.points_diff || 0);
 
     updateTurnBanner(isMyTurn);
 
@@ -538,10 +541,11 @@
       } else {
         wcgChainStream.innerHTML = chain.map(item => {
           const isYou = (item.symbol === mySymbol);
+          const author = item.by || item.player || (isYou ? (currentUser.username || 'You') : (currentRoom?.opponent?.username || 'Opponent'));
           return `
             <div class="wcg-chip ${isYou ? 'you' : 'opp'}">
               <span class="wcg-chip-word">${item.word.toUpperCase()}</span>
-              <span class="wcg-chip-author">@${item.by}</span>
+              <span class="wcg-chip-author">@${author}</span>
             </div>
           `;
         }).join('');
@@ -644,7 +648,7 @@
             <div class="lb-left">
               <span class="lb-rank" style="${isTop ? 'color: var(--accent-emerald); font-weight: 800;' : ''}">#${rankStr}</span>
               <div>
-                <div class="lb-name">@${entry.username}</div>
+                <div class="lb-name">@${entry.username || 'Anonymous'}</div>
                 <span class="lb-record">${entry.wins}W · ${entry.losses}L · ${entry.draws}D</span>
               </div>
             </div>

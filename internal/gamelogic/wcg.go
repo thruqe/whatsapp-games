@@ -13,6 +13,7 @@ import (
 type WCGWordEntry struct {
 	Word   string `json:"word"`
 	Player string `json:"player"`
+	By     string `json:"by"`
 	Symbol string `json:"symbol"`
 	Points int    `json:"points"`
 }
@@ -101,6 +102,7 @@ func (g *WCGGame) SubmitWord(rawWord string, playerSymbol string, playerName str
 	g.Chain = append(g.Chain, WCGWordEntry{
 		Word:   word,
 		Player: playerName,
+		By:     playerName,
 		Symbol: playerSymbol,
 		Points: wordPoints,
 	})

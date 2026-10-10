@@ -323,4 +323,15 @@ func TestWCGGame(t *testing.T) {
 	if botWord == "" || strings.ToUpper(string(botWord[0])) != "T" {
 		t.Fatalf("expected bot to find word starting with T, got %s", botWord)
 	}
+
+	// Verify WCGWordEntry fields for frontend serialization
+	if len(wcg.Chain) < 2 {
+		t.Fatalf("expected at least 2 entries in wcg.Chain, got %d", len(wcg.Chain))
+	}
+	if wcg.Chain[0].By != "Alice" || wcg.Chain[0].Player != "Alice" {
+		t.Fatalf("expected entry By and Player to be 'Alice', got By=%s Player=%s", wcg.Chain[0].By, wcg.Chain[0].Player)
+	}
+	if wcg.Chain[1].By != "Bob" || wcg.Chain[1].Player != "Bob" {
+		t.Fatalf("expected entry By and Player to be 'Bob', got By=%s Player=%s", wcg.Chain[1].By, wcg.Chain[1].Player)
+	}
 }
