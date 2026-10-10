@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -22,11 +23,15 @@ import (
 func main() {
 	port := flag.String("port", "8088", "Port to listen on")
 	dbPath := flag.String("db", "games.db", "SQLite database file path")
+	dbURL := flag.String("database-url", "", "PostgreSQL database connection URL (or set DATABASE_URL env)")
 	useTunnel := flag.Bool("tunnel", false, "Start cloudflared quick tunnel for public HTTPS")
 	flag.Parse()
 
 	if envPort := os.Getenv("PORT"); envPort != "" {
 		*port = envPort
+	}
+	if envURL := os.Getenv("DATABASE_URL"); envURL != "" {
+		*dbURL = envURL
 	}
 	if envDB := os.Getenv("DB_PATH"); envDB != "" {
 		*dbPath = envDB
@@ -35,17 +40,27 @@ func main() {
 		*useTunnel = true
 	}
 
+	connTarget := *dbPath
+	if *dbURL != "" {
+		connTarget = *dbURL
+	}
+
 	log.Println("==================================================")
 	log.Println("🎮 Starting WhatsApp Webview Games Server")
 	log.Println("==================================================")
 
 	// 1. Initialize Database Service with buffered channel batch worker
-	dbSvc, err := db.NewService(*dbPath, 1024)
+	dbSvc, err := db.NewService(connTarget, 1024)
 	if err != nil {
 		log.Fatalf("Failed to initialize Database Service: %v", err)
 	}
 	defer dbSvc.Close()
-	log.Printf("[Database Service] Initialized with SQLite database: %s", *dbPath)
+
+	if strings.HasPrefix(connTarget, "postgres://") || strings.HasPrefix(connTarget, "postgresql://") {
+		log.Println("[Database Service] Initialized with PostgreSQL database")
+	} else {
+		log.Printf("[Database Service] Initialized with SQLite database: %s", connTarget)
+	}
 
 	// 2. Initialize Connection Manager Agent
 	connMgr := connmanager.NewManager(nil)

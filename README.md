@@ -8,11 +8,12 @@ Users launch games directly from WhatsApp via the bot command `.games`. The bot 
 
 Configuration is managed through environment variables or CLI flags; supported settings include:
 
-| Environment Variable | CLI Flag    | Default    | Description                                             |
-| :------------------- | :---------- | :--------- | :------------------------------------------------------ |
-| `PORT`               | `--port`    | `8088`     | HTTP and WebSocket port to listen on                    |
-| `DB_PATH`            | `--db`      | `games.db` | SQLite database file path                               |
-| `TUNNEL`             | `--tunnel`  | `false`    | Automatically launch `cloudflared` quick HTTPS tunnel   |
+| Environment Variable | CLI Flag          | Default    | Description                                             |
+| :------------------- | :---------------- | :--------- | :------------------------------------------------------ |
+| `PORT`               | `--port`          | `8088`     | HTTP and WebSocket port to listen on                    |
+| `DATABASE_URL`       | `--database-url`  | `""`       | PostgreSQL connection string (e.g., on Render/Heroku)   |
+| `DB_PATH`            | `--db`            | `games.db` | SQLite database file path (used if no `DATABASE_URL`)   |
+| `TUNNEL`             | `--tunnel`        | `false`    | Automatically launch `cloudflared` quick HTTPS tunnel   |
 
 ### Running the Server
 

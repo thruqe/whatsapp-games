@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	_ "github.com/lib/pq"
 	_ "modernc.org/sqlite"
 )
 
@@ -21,6 +22,7 @@ var (
 // Service manages database persistence and asynchronous event batching.
 type Service struct {
 	db        *sql.DB
+	driver    string // "sqlite" or "postgres"
 	eventChan chan InteractionEvent
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -31,23 +33,44 @@ type Service struct {
 	nameMap map[string]string // lowercase username -> sessionID
 }
 
-// NewService initializes SQLite with WAL mode and launches the asynchronous batch worker.
-func NewService(dbPath string, bufferSize int) (*Service, error) {
+// NewService initializes a database connection (SQLite or PostgreSQL) and launches the asynchronous batch worker.
+// If connStr starts with "postgres://" or "postgresql://", PostgreSQL is used.
+// Otherwise, it treats connStr as a SQLite database file path.
+func NewService(connStr string, bufferSize int) (*Service, error) {
 	if bufferSize <= 0 {
 		bufferSize = 1024
 	}
 
-	dsn := fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(5000)", dbPath)
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		return nil, fmt.Errorf("open sqlite db: %w", err)
+	var driver, dsn string
+	if strings.HasPrefix(connStr, "postgres://") || strings.HasPrefix(connStr, "postgresql://") {
+		driver = "postgres"
+		dsn = connStr
+	} else {
+		driver = "sqlite"
+		dsn = fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(5000)", connStr)
 	}
 
-	db.SetMaxOpenConns(1) // SQLite performs best with 1 writer connection
+	db, err := sql.Open(driver, dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open %s db: %w", driver, err)
+	}
+
+	if driver == "sqlite" {
+		db.SetMaxOpenConns(1) // SQLite performs best with 1 writer connection
+	} else {
+		db.SetMaxOpenConns(25)
+		db.SetMaxIdleConns(5)
+		db.SetConnMaxLifetime(5 * time.Minute)
+		if err := db.Ping(); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("ping postgres db: %w", err)
+		}
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Service{
 		db:        db,
+		driver:    driver,
 		eventChan: make(chan InteractionEvent, bufferSize),
 		ctx:       ctx,
 		cancel:    cancel,
@@ -70,52 +93,114 @@ func NewService(dbPath string, bufferSize int) (*Service, error) {
 	return s, nil
 }
 
+func (s *Service) rebind(query string) string {
+	if s.driver != "postgres" {
+		return query
+	}
+	var b strings.Builder
+	param := 1
+	for i := 0; i < len(query); i++ {
+		if query[i] == '?' {
+			fmt.Fprintf(&b, "$%d", param)
+			param++
+		} else {
+			b.WriteByte(query[i])
+		}
+	}
+	return b.String()
+}
+
 func (s *Service) initSchema() error {
-	createTables := `
-	CREATE TABLE IF NOT EXISTS users (
-		session_id TEXT PRIMARY KEY,
-		user_jid TEXT NOT NULL,
-		username TEXT UNIQUE NOT NULL,
-		points INTEGER NOT NULL DEFAULT 0,
-		wins INTEGER NOT NULL DEFAULT 0,
-		losses INTEGER NOT NULL DEFAULT 0,
-		draws INTEGER NOT NULL DEFAULT 0,
-		points_diff INTEGER NOT NULL DEFAULT 0,
-		created_at DATETIME NOT NULL,
-		updated_at DATETIME NOT NULL
-	);
+	var createTables string
+	if s.driver == "postgres" {
+		createTables = `
+		CREATE TABLE IF NOT EXISTS users (
+			session_id TEXT PRIMARY KEY,
+			user_jid TEXT NOT NULL,
+			username TEXT UNIQUE NOT NULL,
+			points INTEGER NOT NULL DEFAULT 0,
+			wins INTEGER NOT NULL DEFAULT 0,
+			losses INTEGER NOT NULL DEFAULT 0,
+			draws INTEGER NOT NULL DEFAULT 0,
+			points_diff INTEGER NOT NULL DEFAULT 0,
+			created_at TIMESTAMP NOT NULL,
+			updated_at TIMESTAMP NOT NULL
+		);
 
-	CREATE TABLE IF NOT EXISTS game_stats (
-		session_id TEXT NOT NULL,
-		game_type TEXT NOT NULL,
-		points INTEGER NOT NULL DEFAULT 0,
-		wins INTEGER NOT NULL DEFAULT 0,
-		losses INTEGER NOT NULL DEFAULT 0,
-		draws INTEGER NOT NULL DEFAULT 0,
-		points_diff INTEGER NOT NULL DEFAULT 0,
-		updated_at DATETIME NOT NULL,
-		PRIMARY KEY (session_id, game_type)
-	);
+		CREATE TABLE IF NOT EXISTS game_stats (
+			session_id TEXT NOT NULL,
+			game_type TEXT NOT NULL,
+			points INTEGER NOT NULL DEFAULT 0,
+			wins INTEGER NOT NULL DEFAULT 0,
+			losses INTEGER NOT NULL DEFAULT 0,
+			draws INTEGER NOT NULL DEFAULT 0,
+			points_diff INTEGER NOT NULL DEFAULT 0,
+			updated_at TIMESTAMP NOT NULL,
+			PRIMARY KEY (session_id, game_type)
+		);
 
-	CREATE TABLE IF NOT EXISTS matches (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		game_type TEXT NOT NULL,
-		player1_session TEXT NOT NULL,
-		player2_session TEXT NOT NULL,
-		player1_name TEXT NOT NULL,
-		player2_name TEXT NOT NULL,
-		winner_session TEXT NOT NULL,
-		moves_count INTEGER NOT NULL DEFAULT 0,
-		created_at DATETIME NOT NULL
-	);
-	`
+		CREATE TABLE IF NOT EXISTS matches (
+			id SERIAL PRIMARY KEY,
+			game_type TEXT NOT NULL,
+			player1_session TEXT NOT NULL,
+			player2_session TEXT NOT NULL,
+			player1_name TEXT NOT NULL,
+			player2_name TEXT NOT NULL,
+			winner_session TEXT NOT NULL,
+			moves_count INTEGER NOT NULL DEFAULT 0,
+			created_at TIMESTAMP NOT NULL
+		);
+		`
+	} else {
+		createTables = `
+		CREATE TABLE IF NOT EXISTS users (
+			session_id TEXT PRIMARY KEY,
+			user_jid TEXT NOT NULL,
+			username TEXT UNIQUE NOT NULL,
+			points INTEGER NOT NULL DEFAULT 0,
+			wins INTEGER NOT NULL DEFAULT 0,
+			losses INTEGER NOT NULL DEFAULT 0,
+			draws INTEGER NOT NULL DEFAULT 0,
+			points_diff INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME NOT NULL,
+			updated_at DATETIME NOT NULL
+		);
+
+		CREATE TABLE IF NOT EXISTS game_stats (
+			session_id TEXT NOT NULL,
+			game_type TEXT NOT NULL,
+			points INTEGER NOT NULL DEFAULT 0,
+			wins INTEGER NOT NULL DEFAULT 0,
+			losses INTEGER NOT NULL DEFAULT 0,
+			draws INTEGER NOT NULL DEFAULT 0,
+			points_diff INTEGER NOT NULL DEFAULT 0,
+			updated_at DATETIME NOT NULL,
+			PRIMARY KEY (session_id, game_type)
+		);
+
+		CREATE TABLE IF NOT EXISTS matches (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			game_type TEXT NOT NULL,
+			player1_session TEXT NOT NULL,
+			player2_session TEXT NOT NULL,
+			player1_name TEXT NOT NULL,
+			player2_name TEXT NOT NULL,
+			winner_session TEXT NOT NULL,
+			moves_count INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME NOT NULL
+		);
+		`
+	}
+
 	if _, err := s.db.Exec(createTables); err != nil {
 		return err
 	}
 
 	// Safe migration for pre-existing tables lacking points or points_diff
-	_, _ = s.db.Exec(`ALTER TABLE users ADD COLUMN points INTEGER NOT NULL DEFAULT 0;`)
-	_, _ = s.db.Exec(`ALTER TABLE users ADD COLUMN points_diff INTEGER NOT NULL DEFAULT 0;`)
+	if s.driver == "sqlite" {
+		_, _ = s.db.Exec(`ALTER TABLE users ADD COLUMN points INTEGER NOT NULL DEFAULT 0;`)
+		_, _ = s.db.Exec(`ALTER TABLE users ADD COLUMN points_diff INTEGER NOT NULL DEFAULT 0;`)
+	}
 
 	createIndexes := `
 	CREATE INDEX IF NOT EXISTS idx_users_points ON users (points DESC, points_diff DESC);
@@ -193,9 +278,10 @@ func (s *Service) RegisterUsername(sessionID, userJID, username string) (bool, e
 		username = excluded.username,
 		updated_at = excluded.updated_at;
 	`
-	_, err := s.db.Exec(query, sessionID, userJID, cleanName, now, now)
+	_, err := s.db.Exec(s.rebind(query), sessionID, userJID, cleanName, now, now)
 	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE") {
+		errUpper := strings.ToUpper(err.Error())
+		if strings.Contains(errUpper, "UNIQUE") || strings.Contains(errUpper, "DUPLICATE KEY") || strings.Contains(err.Error(), "23505") {
 			s.namesMu.Lock()
 			delete(s.nameMap, lower)
 			s.namesMu.Unlock()
@@ -209,9 +295,9 @@ func (s *Service) RegisterUsername(sessionID, userJID, username string) (bool, e
 
 // GetProfileBySession fetches a user profile by their bot-provided session ID.
 func (s *Service) GetProfileBySession(sessionID string) (*UserProfile, error) {
-	row := s.db.QueryRow(`
+	row := s.db.QueryRow(s.rebind(`
 		SELECT session_id, user_jid, username, points, wins, losses, draws, points_diff, created_at, updated_at
-		FROM users WHERE session_id = ?`, sessionID)
+		FROM users WHERE session_id = ?`), sessionID)
 
 	var p UserProfile
 	err := row.Scan(&p.SessionID, &p.UserJID, &p.Username, &p.Points, &p.Wins, &p.Losses, &p.Draws, &p.PointsDiff, &p.CreatedAt, &p.UpdatedAt)
@@ -236,19 +322,19 @@ func (s *Service) GetLeaderboard(gameType string, limit int) ([]LeaderboardEntry
 	var err error
 
 	if gameType == "" || gameType == "global" || gameType == "all" {
-		rows, err = s.db.Query(`
+		rows, err = s.db.Query(s.rebind(`
 			SELECT username, 'global' as game_type, points, wins, losses, draws, points_diff
 			FROM users
 			ORDER BY points DESC, points_diff DESC, wins DESC
-			LIMIT ?`, limit)
+			LIMIT ?`), limit)
 	} else {
-		rows, err = s.db.Query(`
+		rows, err = s.db.Query(s.rebind(`
 			SELECT u.username, s.game_type, s.points, s.wins, s.losses, s.draws, s.points_diff
 			FROM game_stats s
 			JOIN users u ON s.session_id = u.session_id
 			WHERE s.game_type = ?
 			ORDER BY s.points DESC, s.points_diff DESC, s.wins DESC
-			LIMIT ?`, gameType, limit)
+			LIMIT ?`), gameType, limit)
 	}
 
 	if err != nil {
@@ -327,91 +413,91 @@ func (s *Service) persistBatch(events []InteractionEvent) error {
 		_ = tx.Rollback()
 	}()
 
-	matchStmt, err := tx.Prepare(`
+	matchStmt, err := tx.Prepare(s.rebind(`
 		INSERT INTO matches (game_type, player1_session, player2_session, player1_name, player2_name, winner_session, moves_count, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`)
+	`))
 	if err != nil {
 		return fmt.Errorf("prepare match stmt: %w", err)
 	}
 	defer matchStmt.Close()
 
-	updateUserWinStmt, err := tx.Prepare(`
+	updateUserWinStmt, err := tx.Prepare(s.rebind(`
 		UPDATE users SET
 			points = points + ?,
 			points_diff = points_diff + ?,
 			wins = wins + 1,
 			updated_at = ?
 		WHERE session_id = ?
-	`)
+	`))
 	if err != nil {
 		return fmt.Errorf("prepare user win stmt: %w", err)
 	}
 	defer updateUserWinStmt.Close()
 
-	updateUserLossStmt, err := tx.Prepare(`
+	updateUserLossStmt, err := tx.Prepare(s.rebind(`
 		UPDATE users SET
 			points = points + ?,
 			points_diff = points_diff + ?,
 			losses = losses + 1,
 			updated_at = ?
 		WHERE session_id = ?
-	`)
+	`))
 	if err != nil {
 		return fmt.Errorf("prepare user loss stmt: %w", err)
 	}
 	defer updateUserLossStmt.Close()
 
-	updateUserDrawStmt, err := tx.Prepare(`
+	updateUserDrawStmt, err := tx.Prepare(s.rebind(`
 		UPDATE users SET
 			points = points + ?,
 			points_diff = points_diff + ?,
 			draws = draws + 1,
 			updated_at = ?
 		WHERE session_id = ?
-	`)
+	`))
 	if err != nil {
 		return fmt.Errorf("prepare user draw stmt: %w", err)
 	}
 	defer updateUserDrawStmt.Close()
 
-	upsertGameStatsWinStmt, err := tx.Prepare(`
+	upsertGameStatsWinStmt, err := tx.Prepare(s.rebind(`
 		INSERT INTO game_stats (session_id, game_type, points, wins, losses, draws, points_diff, updated_at)
 		VALUES (?, ?, ?, 1, 0, 0, ?, ?)
 		ON CONFLICT(session_id, game_type) DO UPDATE SET
-			points = points + excluded.points,
-			points_diff = points_diff + excluded.points_diff,
+			points = game_stats.points + excluded.points,
+			points_diff = game_stats.points_diff + excluded.points_diff,
 			wins = wins + 1,
 			updated_at = excluded.updated_at
-	`)
+	`))
 	if err != nil {
 		return fmt.Errorf("prepare game_stats win stmt: %w", err)
 	}
 	defer upsertGameStatsWinStmt.Close()
 
-	upsertGameStatsLossStmt, err := tx.Prepare(`
+	upsertGameStatsLossStmt, err := tx.Prepare(s.rebind(`
 		INSERT INTO game_stats (session_id, game_type, points, wins, losses, draws, points_diff, updated_at)
 		VALUES (?, ?, ?, 0, 1, 0, ?, ?)
 		ON CONFLICT(session_id, game_type) DO UPDATE SET
-			points = points + excluded.points,
-			points_diff = points_diff + excluded.points_diff,
+			points = game_stats.points + excluded.points,
+			points_diff = game_stats.points_diff + excluded.points_diff,
 			losses = losses + 1,
 			updated_at = excluded.updated_at
-	`)
+	`))
 	if err != nil {
 		return fmt.Errorf("prepare game_stats loss stmt: %w", err)
 	}
 	defer upsertGameStatsLossStmt.Close()
 
-	upsertGameStatsDrawStmt, err := tx.Prepare(`
+	upsertGameStatsDrawStmt, err := tx.Prepare(s.rebind(`
 		INSERT INTO game_stats (session_id, game_type, points, wins, losses, draws, points_diff, updated_at)
 		VALUES (?, ?, ?, 0, 0, 1, ?, ?)
 		ON CONFLICT(session_id, game_type) DO UPDATE SET
-			points = points + excluded.points,
-			points_diff = points_diff + excluded.points_diff,
+			points = game_stats.points + excluded.points,
+			points_diff = game_stats.points_diff + excluded.points_diff,
 			draws = draws + 1,
 			updated_at = excluded.updated_at
-	`)
+	`))
 	if err != nil {
 		return fmt.Errorf("prepare game_stats draw stmt: %w", err)
 	}
